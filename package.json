@@ -1,5 +1,5 @@
 {
-  "name": "@grexie/jaeol-contracts",
+  "name": "@grexie/jaeol-contract",
   "version": "1.0.0",
   "license": "MIT",
   "scripts": {
@@ -42,5 +42,10 @@
   },
   "publishConfig": {
     "access": "public"
+  },
+  "exports": {
+    ".": {
+      "default": "./contracts/BondToken.json"
+    }
   }
 }

@@ -1,0 +1,11 @@
+.gitignore
+.prettierrc
+.github/
+build/
+src/
+scripts/
+types/
+tsconfig.json
+tsconfig.tsbuildinfo
+truffle-config.js
+yarn.lock
