@@ -1,0 +1,14 @@
+build/
+/types/
+node_modules
+.env
+coverage
+coverage.json
+typechain
+typechain-types
+/contracts/
+
+# Hardhat files
+cache
+artifacts
+
