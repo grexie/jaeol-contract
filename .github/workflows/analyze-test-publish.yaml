@@ -1,0 +1,68 @@
+name: Slither Analysis
+
+on: [push]
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Run Slither
+        uses: crytic/slither-action@v0.3.0
+        id: slither
+        with:
+          sarif: results.sarif
+          solc-version: 0.8.17
+          slither-args: --truffle-build-directory build --exclude-dependencies
+          fail-on: none
+
+      - name: Upload SARIF file
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: ${{ steps.slither.outputs.sarif }}
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [16.x]
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-node@v1
+        with:
+          node-version: ${{ matrix.node-version }}
+      - id: cache-modules
+        uses: actions/cache@v1
+        with:
+          path: node_modules
+          key:
+            ${{ matrix.node-version }}-${{ runner.OS }}-build-${{
+            hashFiles('package.json', 'yarn.lock') }}
+      - if: steps.cache-modules.outputs.cache-hit != 'true'
+        run: yarn --frozen-lockfile
+      - run: yarn build
+      - run: yarn ganache &
+      - name: test
+        run: yarn test
+
+  publish:
+    name: publish
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - id: cache-modules
+        uses: actions/cache@v1
+        with:
+          path: node_modules
+          key:
+            ${{ matrix.node-version }}--${{ runner.OS
+            }}-build-${{hashFiles('package.json', 'yarn.lock') }}
+      - if: steps.cache-modules.outputs.cache-hit != 'true'
+        run: yarn --frozen-lockfile
+      - run: yarn build
+      - uses: mikeal/merge-release@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
