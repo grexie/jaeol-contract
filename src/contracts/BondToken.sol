@@ -2,21 +2,22 @@
  * SPDX-License-Identifier: MIT
  */
 
-pragma solidity ^0.8.17;
+pragma solidity ^0.8.18;
 pragma experimental ABIEncoderV2;
 
-import '@openzeppelin/contracts/utils/Address.sol';
-import '@openzeppelin/contracts/utils/Strings.sol';
-import '@openzeppelin/contracts/utils/introspection/ERC165.sol';
-import '@openzeppelin/contracts/utils/introspection/IERC165.sol';
-import '@openzeppelin/contracts/access/Ownable.sol';
-import '@openzeppelin/contracts/token/ERC20/IERC20.sol';
-import '@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol';
-import '@openzeppelin/contracts/token/ERC1155/IERC1155.sol';
-import '@openzeppelin/contracts/token/ERC1155/extensions/IERC1155MetadataURI.sol';
-import '@openzeppelin/contracts/token/ERC1155/utils/ERC1155Receiver.sol';
-import { LinkedList } from './LinkedList.sol';
-import { Signable } from '@grexie/signable/contracts/Signable.sol';
+import "@openzeppelin/contracts/utils/Address.sol";
+import "@openzeppelin/contracts/utils/Strings.sol";
+import "@openzeppelin/contracts/utils/math/SignedMath.sol";
+import "@openzeppelin/contracts/utils/introspection/ERC165.sol";
+import "@openzeppelin/contracts/utils/introspection/IERC165.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
+import "@openzeppelin/contracts/token/ERC1155/extensions/IERC1155MetadataURI.sol";
+import "@openzeppelin/contracts/token/ERC1155/utils/ERC1155Receiver.sol";
+import { LinkedList } from "./LinkedList.sol";
+import { Signable } from "@grexie/signable/contracts/Signable.sol";
 
 contract BondToken is
   Ownable,
@@ -136,7 +137,13 @@ contract BondToken is
   mapping(address => mapping(address => uint256)) public allowances;
 
   event ConfigChanged(Config from, Config to);
-  event TransferFee(address indexed account, uint256 amount);
+  event TransferFee(
+    address indexed operator,
+    address indexed from,
+    address indexed to,
+    uint256 value,
+    uint256 fee
+  );
   event AccountPaused(address indexed account);
   event AccountResumed(address indexed account);
   event AdminPaused(address indexed account);
@@ -170,10 +177,10 @@ contract BondToken is
   function addBondType(
     BondType calldata bondType_
   ) external onlyOwner returns (uint256) {
-    emit AddedBondType(bondType_);
     uint256 id = nextBondType++;
     bondTypes[id] = bondType_;
     bondTypes[id].id = id;
+    emit AddedBondType(bondTypes[id]);
     return id;
   }
 
@@ -188,11 +195,16 @@ contract BondToken is
   function addBondForge(
     BondForge calldata bondForge_
   ) external onlyOwner returns (uint256) {
-    emit AddedBondForge(bondForge_);
     uint256 id = nextBondForge++;
     bondForges[id] = bondForge_;
     bondForges[id].id = id;
+    emit AddedBondForge(bondForges[id]);
     return id;
+  }
+
+  function getBondForge(uint256 id) public view returns (BondForge memory) {
+    BondForge memory bondForge_ = bondForges[id];
+    return bondForge_;
   }
 
   function updateBondForge(
@@ -234,14 +246,13 @@ contract BondToken is
 
   function balanceOf(
     address account,
-    uint256 bondID
+    uint256 token
   ) external view returns (uint256) {
+    uint256 bondID = bondTokens[token].bond;
     require(bonds[account][bondID].owner == account);
-
     return bonds[account][bondID].balance;
   }
 
-  // TODO: ERC1155???
   function balanceOfBatch(
     address[] calldata accounts,
     uint256[] calldata ids
@@ -256,13 +267,6 @@ contract BondToken is
 
     return batchBalances;
   }
-
-  // function getLastAccountBond(
-  //   address account
-  // ) public view returns (bool, uint256) {
-  //   (bool exists, , uint256 next) = accountBonds[account].getNode(0);
-  //   return (exists, next);
-  // }
 
   function bondHead(
     address account
@@ -286,8 +290,9 @@ contract BondToken is
     uint256 amount,
     bool transferFee,
     uint256 multiplier100,
-    uint256 matures
-  ) internal returns (bool, uint256, uint256) {
+    uint256 matures,
+    bool autolink
+  ) internal returns (uint256, uint256) {
     require(amount > 0);
 
     mapping(uint256 => Bond) storage _bonds = bonds[account];
@@ -299,19 +304,19 @@ contract BondToken is
       matures = block.timestamp + bondTypes[bondType].matureDuration;
     }
 
-    uint256 id;
-    uint256 tokenId;
-
     LinkedList.List storage list = bondsByBondType[account][bondType][
       multiplier100
     ];
 
+    uint256 id;
+    uint256 tokenId;
+
     Bond storage bond_ = _bonds[list.head];
 
     if (
+      autolink &&
       list.list[list.head].exists &&
-      (int256(bond_.matures) - int256(matures) < 7 * 24 * 3600 ||
-        int256(matures) - int256(bond_.matures) < 7 * 24 * 3600)
+      SignedMath.abs(int256(bond_.matures) - int256(matures)) < 7 * 24 * 3600
     ) {
       id = list.head;
       tokenId = _bonds[id].token;
@@ -330,16 +335,16 @@ contract BondToken is
       );
     }
 
-    if (transferFee) {
-      uint256 fee = (amount * config.transferFee100) / (100 * 100);
-      amount -= fee;
+    uint256 fee = 0;
 
-      emit TransferFee(account, fee);
+    if (transferFee) {
+      fee = (amount * config.transferFee100) / (100 * 100);
+      amount -= fee;
     }
 
     _creditBondSetBalances(account, id, amount);
 
-    return (true, id, tokenId);
+    return (tokenId, fee);
   }
 
   function _creditBondSetBalances(
@@ -387,8 +392,8 @@ contract BondToken is
     uint256 bond,
     uint256 amount
   ) internal returns (bool) {
-    require(amount > 0);
-    require(bonds[account][bond].balance >= amount);
+    require(amount > 0, "E");
+    require(bonds[account][bond].balance >= amount, bond.toString());
 
     bonds[account][bond].balance -= amount;
     balances[account] -= amount;
@@ -449,6 +454,8 @@ contract BondToken is
     require(allowances[from][to] >= amount);
     bool success = _transferFrom(from, to, amount);
 
+    allowances[from][to] -= amount;
+
     return success;
   }
 
@@ -459,15 +466,10 @@ contract BondToken is
     uint256 amount,
     bytes calldata data
   ) external {
-    require(
-      from == _msgSender() || this.isApprovedForAll(from, _msgSender()),
-      '07'
-    );
+    require(from == _msgSender() || this.isApprovedForAll(from, _msgSender()));
     require(bondTokens[id].owner == from);
 
     _transferBondFrom(bondTokens[id].bond, from, to, amount);
-
-    emit TransferSingle(_msgSender(), from, to, id, amount);
 
     _doSafeTransferAcceptanceCheck(_msgSender(), from, to, id, amount, data);
   }
@@ -487,8 +489,6 @@ contract BondToken is
       require(bondTokens[ids[i]].owner == from);
       _transferBondFrom(bondTokens[ids[i]].bond, from, to, amounts[i]);
     }
-
-    emit TransferBatch(operator, from, to, ids, amounts);
 
     _doSafeBatchTransferAcceptanceCheck(operator, from, to, ids, amounts, data);
   }
@@ -511,16 +511,8 @@ contract BondToken is
       amount -= transferred;
 
       if (!_transferBondFrom(bond, from, to, transferred)) {
-        revert('04');
+        revert();
       }
-
-      emit TransferSingle(
-        _msgSender(),
-        from,
-        to,
-        bonds[from][bond].token,
-        amount
-      );
     }
 
     return true;
@@ -532,20 +524,40 @@ contract BondToken is
     address to,
     uint256 amount
   ) internal returns (bool) {
-    require(to != address(0));
+    require(to != address(0) && to != address(this));
     require(bonds[from][bond].owner == from);
 
     _debitBond(from, bond, amount);
-    _creditBond(
+
+    (uint256 tokenId, uint256 fee) = _creditBond(
       to,
       bonds[from][bond].bondType,
       amount,
       true,
       bonds[from][bond].multiplier100,
-      bonds[from][bond].matures
+      bonds[from][bond].matures,
+      true
     );
 
-    emit Transfer(from, to, amount);
+    emit TransferFee(_msgSender(), from, to, amount, fee);
+    emit Transfer(from, address(0), fee);
+    emit TransferSingle(
+      _msgSender(),
+      from,
+      address(0),
+      bonds[from][bond].token,
+      fee
+    );
+
+    emit Transfer(from, to, amount - fee);
+    emit TransferSingle(
+      _msgSender(),
+      from,
+      address(0),
+      bonds[from][bond].token,
+      amount - fee
+    );
+    emit TransferSingle(_msgSender(), address(0), to, tokenId, amount - fee);
 
     return true;
   }
@@ -563,12 +575,12 @@ contract BondToken is
         IERC1155Receiver(to).onERC1155Received(operator, from, id, amount, data)
       returns (bytes4 response) {
         if (response != IERC1155Receiver.onERC1155Received.selector) {
-          revert('10');
+          revert();
         }
       } catch Error(string memory reason) {
         revert(reason);
       } catch {
-        revert('11');
+        revert();
       }
     }
   }
@@ -592,12 +604,12 @@ contract BondToken is
         )
       returns (bytes4 response) {
         if (response != IERC1155Receiver.onERC1155BatchReceived.selector) {
-          revert('12');
+          revert();
         }
       } catch Error(string memory reason) {
         revert(reason);
       } catch {
-        revert('13');
+        revert();
       }
     }
   }
@@ -639,21 +651,27 @@ contract BondToken is
     require(totalSupply + amount <= config.supplyCap);
 
     if (!_usdt.transferFrom(msg.sender, address(this), amount)) {
-      revert('18');
+      revert();
     }
 
     if (!_usdt.transfer(config.depositAccount, amount)) {
-      revert('19');
+      revert();
     }
 
     address to = _msgSender();
 
-    (, , uint256 tokenId) = _creditBond(to, bondType, amount, false, 0, 0);
+    (uint256 tokenId, ) = _creditBond(to, bondType, amount, false, 0, 0, true);
 
     totalSupply += amount;
 
     emit Transfer(address(0), _msgSender(), amount);
-    emit TransferSingle(_msgSender(), address(0), to, tokenId, amount);
+    emit TransferSingle(
+      _msgSender(),
+      address(0),
+      _msgSender(),
+      tokenId,
+      amount
+    );
 
     return true;
   }
@@ -662,16 +680,14 @@ contract BondToken is
     address from = msg.sender;
     require(bonds[from][bond].owner == msg.sender);
     require(bonds[from][bond].balance > 0);
-    require(bonds[from][bond].balance > amount);
+    require(bonds[from][bond].balance >= amount);
     require(
-      bonds[from][bond].matures < block.timestamp ||
-        bonds[from][bond].matures < config.earlyMaturation,
-      '1D'
+      bonds[from][bond].matures <= block.timestamp ||
+        bonds[from][bond].matures <= config.earlyMaturation
     );
     require(
       _usdt.balanceOf(address(this)) >=
-        (amount * bonds[from][bond].multiplier100) / 100,
-      '1E'
+        (amount * bonds[from][bond].multiplier100) / 100
     );
 
     _debitBond(_msgSender(), bond, amount);
@@ -682,7 +698,7 @@ contract BondToken is
         (amount * bonds[from][bond].multiplier100) / 100
       )
     ) {
-      revert('1F');
+      revert();
     }
 
     totalSupply -= amount;
@@ -723,12 +739,21 @@ contract BondToken is
       if (bonds[_msgSender()][bonds_[i]].matures > matures) {
         matures = bonds[_msgSender()][bonds_[i]].matures;
       }
+
       _debitBond(_msgSender(), bonds_[i], amounts_[i]);
     }
 
     require(requirementsMet == bonds_.length);
 
-    _creditBond(_msgSender(), bondType, amount, false, multiplier100, matures);
+    _creditBond(
+      _msgSender(),
+      bondType,
+      amount,
+      false,
+      multiplier100,
+      matures,
+      false
+    );
 
     return true;
   }
@@ -752,7 +777,8 @@ contract BondToken is
         amounts_[i],
         false,
         multiplier100,
-        matures
+        matures,
+        false
       );
     }
 
@@ -766,53 +792,61 @@ contract BondToken is
     uint256[] calldata bonds_,
     uint256[] calldata amounts_
   ) external returns (bool) {
+    BondForge storage _forge = bondForges[forge_];
     require(bonds_.length == amounts_.length);
-    require(bondForges[forge_].enabled);
+    require(_forge.enabled);
 
     uint256 amount = 0;
     uint256 bondType = bondForges[forge_].result.bondType;
     uint256 multiplier100 = bondForges[forge_].result.multiplier100;
     uint256 matureDuration = bondForges[forge_].result.matureDuration;
     uint256 requirementsMet = 0;
+    uint256[16] memory requirementCounts;
+
+    for (uint256 j = 0; j < _forge.requirements.length; j++) {
+      requirementCounts[j] = _forge.requirements[j].count;
+    }
 
     for (uint256 i = 0; i < bonds_.length; i++) {
-      for (uint256 j = 0; j < bondForges[forge_].requirements.length; j++) {
-        BondForgeRequirement storage requirement = bondForges[forge_]
-          .requirements[j];
+      Bond storage _bond = bonds[_msgSender()][bonds_[i]];
+
+      for (uint256 j = 0; j < _forge.requirements.length; j++) {
+        BondForgeRequirement storage requirement = _forge.requirements[j];
 
         if (
-          requirement.bondType == bonds[_msgSender()][bonds_[i]].bondType &&
-          bonds[_msgSender()][bonds_[i]].balance >= requirement.balance &&
-          bonds[_msgSender()][bonds_[i]].multiplier100 >=
-          requirement.multiplier100
+          requirement.bondType == _bond.bondType &&
+          _bond.balance >= requirement.balance &&
+          _bond.multiplier100 >= requirement.multiplier100
         ) {
-          if (requirement.count == 0) {
-            revert('F2');
+          if (requirementCounts[j] == 0) {
+            revert();
           } else {
-            requirement.count--;
-            if (requirement.count == 0) {
+            requirementCounts[j]--;
+            if (requirementCounts[j] == 0) {
               requirementsMet++;
             }
           }
+          break;
         }
       }
 
       amount += amounts_[i];
-      if (bonds[_msgSender()][bonds_[i]].multiplier100 > multiplier100) {
-        multiplier100 = bonds[_msgSender()][bonds_[i]].multiplier100;
+      if (_bond.multiplier100 > multiplier100) {
+        multiplier100 = _bond.multiplier100;
       }
       _debitBond(_msgSender(), bonds_[i], amounts_[i]);
     }
 
-    require(requirementsMet == bondForges[forge_].requirements.length);
+    require(requirementsMet == _forge.requirements.length);
 
     _creditBond(
       _msgSender(),
       bondType,
       amount,
-      true,
+      false,
       multiplier100,
-      block.timestamp + matureDuration
+      block.timestamp + matureDuration,
+      false
     );
 
     return true;
@@ -827,16 +861,16 @@ contract BondToken is
   )
     external
     verifySignature(
-      abi.encode(this.gift.selector, account, bondType, amount),
+      abi.encode(this.gift.selector, account, bondType, amount, expires),
       signature
     )
     returns (bool)
   {
-    require(expires <= block.timestamp);
+    require(expires >= block.timestamp);
 
     address to = account;
 
-    (, , uint256 tokenId) = _creditBond(to, bondType, amount, false, 0, 0);
+    (uint256 tokenId, ) = _creditBond(to, bondType, amount, false, 0, 0, false);
 
     totalSupply += amount;
 
@@ -850,7 +884,7 @@ contract BondToken is
     require(amount >= _usdt.allowance(sender, address(this)));
 
     if (!_usdt.transferFrom(sender, address(this), amount)) {
-      revert('21');
+      revert();
     }
 
     return true;
@@ -858,7 +892,7 @@ contract BondToken is
 
   function withdraw(uint256 amount) external onlyOwner returns (bool) {
     if (!_usdt.transfer(config.depositAccount, amount)) {
-      revert('22');
+      revert();
     }
 
     return true;

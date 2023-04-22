@@ -44,7 +44,7 @@
     "access": "public"
   },
   "exports": {
-    ".": {
+    "./contracts/BondToken.json": {
       "default": "./contracts/BondToken.json"
     }
   }

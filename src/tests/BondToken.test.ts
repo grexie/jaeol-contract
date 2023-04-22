@@ -3,15 +3,13 @@
 import chai from "chai";
 import chaiAsPromised from "chai-as-promised";
 import type {
-  BondTokenContract,
   BondTokenInstance,
-  TokenContract,
   TokenInstance,
 } from "../../types/truffle-contracts";
-import type Web3 from "web3";
-import * as ethUtil from "ethereumjs-util";
 import { eventEmitted } from "truffle-assertions";
-import { Bond, BondType, BondHead, BondNext } from "../types/index";
+import { Bond, BondType, BondHead, BondNext, BondForge } from "../types/index";
+
+import { Signer } from "@grexie/signable";
 
 const COINS = Array.from({ length: 15 }, (_, i) => ({
   id: `token-${i}`,
@@ -25,6 +23,26 @@ const COINS = Array.from({ length: 15 }, (_, i) => ({
 }));
 
 type Account = ReturnType<(typeof web3)["eth"]["accounts"]["create"]>;
+
+const advanceBlockAtTime = async (time: number): Promise<void> => {
+  return new Promise((resolve, reject) => {
+    (web3.currentProvider as any).send(
+      {
+        jsonrpc: "2.0",
+        method: "evm_mine",
+        params: [time | 0],
+        id: new Date().getTime(),
+      },
+      (err: any) => {
+        if (err) {
+          return reject(err);
+        }
+
+        return resolve();
+      }
+    );
+  });
+};
 
 chai.use(chaiAsPromised);
 chai.should();
@@ -40,9 +58,12 @@ const DECIMALS = 18n;
 contract("BondToken", ([deployer, wisdom, user1, user2, user3]) => {
   let contract: BondTokenInstance & { address: string };
   let erc20: TokenInstance & { address: string };
+  let signer: ReturnType<(typeof web3)["eth"]["accounts"]["create"]>;
 
   const iterateBonds = async function* (account: string) {
-    var { exists, bond } = (await contract.bondHead(account)) as BondHead;
+    var { exists, bond } = (await contract.bondHead(
+      account
+    )) as any as BondHead;
 
     while (exists) {
       yield (await contract.bonds(account, bond)) as any as Bond;
@@ -50,7 +71,7 @@ contract("BondToken", ([deployer, wisdom, user1, user2, user3]) => {
       var { exists, bond } = (await contract.bondNext(
         account,
         bond
-      )) as BondNext;
+      )) as any as BondNext;
     }
   };
 
@@ -60,13 +81,13 @@ contract("BondToken", ([deployer, wisdom, user1, user2, user3]) => {
     })) as any;
     const decimals = BigInt((await erc20.decimals()).toString());
 
-    await erc20.mint((400_000_000n * 10n ** decimals).toString(), {
+    await erc20.mint((40_000_000_000n * 10n ** decimals).toString(), {
       from: user1,
     });
-    await erc20.mint((400_000_000n * 10n ** decimals).toString(), {
+    await erc20.mint((40_000_000_000n * 10n ** decimals).toString(), {
       from: user2,
     });
-    await erc20.mint((400_000_000n * 10n ** decimals).toString(), {
+    await erc20.mint((40_000_000_000n * 10n ** decimals).toString(), {
       from: user3,
     });
 
@@ -88,6 +109,9 @@ contract("BondToken", ([deployer, wisdom, user1, user2, user3]) => {
       },
       { from: deployer }
     )) as any;
+
+    signer = web3.eth.accounts.create();
+    await contract.setSigner(signer.address, { from: deployer });
   });
 
   describe("ERC20 basic properties", () => {
@@ -239,7 +263,9 @@ contract("BondToken", ([deployer, wisdom, user1, user2, user3]) => {
         .should.equal((50n * 10n ** DECIMALS).toString());
     });
     it("should enumerate minted bonds", async () => {
-      var { exists, bond } = (await contract.bondHead(user1)) as BondHead;
+      var { exists, bond } = (await contract.bondHead(
+        user1
+      )) as any as BondHead;
 
       exists.should.be.false;
       bond.toString().should.equal("0");
@@ -288,15 +314,21 @@ contract("BondToken", ([deployer, wisdom, user1, user2, user3]) => {
         from: user1,
       });
 
-      var { exists, bond } = (await contract.bondHead(user1)) as BondHead;
+      var { exists, bond } = (await contract.bondHead(
+        user1
+      )) as any as BondHead;
       exists.should.be.true;
       bond.toString().should.equal("0");
 
-      var { exists, bond } = (await contract.bondHead(user2)) as BondHead;
+      var { exists, bond } = (await contract.bondHead(
+        user2
+      )) as any as BondHead;
       exists.should.be.false;
       bond.toString().should.equal("0");
 
-      var { exists, bond } = (await contract.bondHead(deployer)) as BondHead;
+      var { exists, bond } = (await contract.bondHead(
+        deployer
+      )) as any as BondHead;
       exists.should.be.false;
       bond.toString().should.equal("0");
 
@@ -304,7 +336,9 @@ contract("BondToken", ([deployer, wisdom, user1, user2, user3]) => {
         from: user1,
       });
 
-      var { exists, bond } = (await contract.bondHead(user1)) as BondHead;
+      var { exists, bond } = (await contract.bondHead(
+        user1
+      )) as any as BondHead;
       exists.should.be.true;
       bond.toString().should.equal("1");
 
@@ -314,7 +348,10 @@ contract("BondToken", ([deployer, wisdom, user1, user2, user3]) => {
         .toString()
         .should.equal((120n * 10n ** DECIMALS).toString());
 
-      var { exists, bond } = (await contract.bondNext(user1, bond)) as BondNext;
+      var { exists, bond } = (await contract.bondNext(
+        user1,
+        bond
+      )) as any as BondNext;
       exists.should.be.true;
       bond.toString().should.equal("0");
 
@@ -524,12 +561,100 @@ contract("BondToken", ([deployer, wisdom, user1, user2, user3]) => {
         },
       });
 
-      const forge1 = contract.bondForges(0n.toString());
-      const forge2 = contract.bondForges(1n.toString());
+      const forge1 = (await contract.getBondForge(
+        0n.toString()
+      )) as any as BondForge;
+      const forge2 = (await contract.getBondForge(
+        1n.toString()
+      )) as any as BondForge;
 
-      // TODO: complete test
+      forge1.id.toString().should.equal(0n.toString());
+      forge1.requirements[0].balance
+        .toString()
+        .should.equal((1_000n * 10n ** DECIMALS).toString());
+      forge2.id.toString().should.equal(1n.toString());
+      forge2.requirements[0].balance
+        .toString()
+        .should.equal((4_000n * 10n ** DECIMALS).toString());
     });
-    it("should update a bond forge");
+    it("should update a bond forge", async () => {
+      await contract.addBondForge({
+        description: "forge-1",
+        enabled: true,
+        id: 1,
+        name: "forge-1",
+        requirements: [
+          {
+            balance: (1_000n * 10n ** DECIMALS).toString(),
+            bondType: 0,
+            count: 3,
+            multiplier100: 5000,
+          },
+        ],
+        result: {
+          bondType: 1,
+          matureDuration: 3600,
+          multiplier100: 1000,
+        },
+      });
+      await contract.addBondForge({
+        description: "forge-2",
+        enabled: false,
+        id: 4,
+        name: "forge-2",
+        requirements: [
+          {
+            balance: (4_000n * 10n ** DECIMALS).toString(),
+            bondType: 1,
+            count: 3,
+            multiplier100: 2000,
+          },
+        ],
+        result: {
+          bondType: 2,
+          matureDuration: 24 * 3600,
+          multiplier100: 3000,
+        },
+      });
+
+      await contract.updateBondForge({
+        description: "forge-3",
+        enabled: true,
+        id: 0,
+        name: "forge-1",
+        requirements: [
+          {
+            balance: (1_000n * 10n ** DECIMALS).toString(),
+            bondType: 0,
+            count: 3,
+            multiplier100: 5000,
+          },
+          {
+            balance: (3_000n * 10n ** DECIMALS).toString(),
+            bondType: 0,
+            count: 3,
+            multiplier100: 5000,
+          },
+        ],
+        result: {
+          bondType: 1,
+          matureDuration: 3600,
+          multiplier100: 1000,
+        },
+      });
+
+      const forge1 = (await contract.getBondForge(
+        0n.toString()
+      )) as any as BondForge;
+
+      forge1.description.should.equal("forge-3");
+      forge1.requirements[0].balance.should.equal(
+        (1_000n * 10n ** DECIMALS).toString()
+      );
+      forge1.requirements[1].balance.should.equal(
+        (3_000n * 10n ** DECIMALS).toString()
+      );
+    });
   });
 
   describe("Token minting", () => {
@@ -564,18 +689,148 @@ contract("BondToken", ([deployer, wisdom, user1, user2, user3]) => {
       });
     });
 
-    it("should only mint for enabled bond types");
-    it("should require bond type minimum amount to be met");
-    it("should revert if allowance is not found in token");
-    it("should transfer usdt to deposit account");
-    it("should create a bond and issue tokens");
-    it("should emit transfer events");
+    it("should only mint for enabled bond types", async () => {
+      const coin = COINS[0];
+
+      await contract.updateBondType({
+        id: 0,
+        enabled: false,
+        amount: (BigInt(coin.value) * 10n ** DECIMALS).toString(),
+        multiplier100: coin.multiplier,
+        matureDuration: BigInt(coin.matureDuration).toString(),
+        ui: {
+          color: coin.color,
+          name: coin.name,
+          style: coin.style,
+          description: coin.description ?? "",
+          visible: true,
+        },
+      });
+
+      await contract
+        .mint(0n.toString(), (100n * 10n ** DECIMALS).toString(), {
+          from: user1,
+        })
+        .should.eventually.rejectedWith();
+    });
+    it("should require bond type minimum amount to be met", async () => {
+      await contract.mint(
+        0n.toString(),
+        (BigInt(COINS[0].value) * 10n ** DECIMALS).toString(),
+        {
+          from: user1,
+        }
+      );
+      await contract
+        .mint(
+          0n.toString(),
+          (BigInt(COINS[0].value) * 10n ** DECIMALS - 1n).toString(),
+          {
+            from: user1,
+          }
+        )
+        .should.eventually.rejectedWith();
+    });
+    it("should revert if allowance is not found in token", async () => {
+      await erc20.approve(contract.address, 0, { from: user1 });
+      await contract
+        .mint(
+          0n.toString(),
+          (BigInt(COINS[0].value) * 10n ** DECIMALS).toString(),
+          {
+            from: user1,
+          }
+        )
+        .should.eventually.rejectedWith();
+    });
+    it("should transfer usdt to deposit account", async () => {
+      await contract.mint(
+        0n.toString(),
+        (BigInt(COINS[0].value) * 10n ** DECIMALS).toString(),
+        {
+          from: user1,
+        }
+      );
+      const usdt = await erc20.balanceOf(wisdom);
+      usdt
+        .toString()
+        .should.equal((BigInt(COINS[0].value) * 10n ** DECIMALS).toString());
+    });
+    it("should create a bond and issue tokens", async () => {
+      await contract.mint(
+        0n.toString(),
+        (BigInt(COINS[0].value) * 10n ** DECIMALS).toString(),
+        {
+          from: user1,
+        }
+      );
+
+      var balance = await contract.methods["balanceOf(address)"](user1);
+
+      balance
+        .toString()
+        .should.equal((BigInt(COINS[0].value) * 10n ** DECIMALS).toString());
+
+      var bonds: Bond[] = [];
+      for await (const bond of iterateBonds(user1)) {
+        bonds.push(bond);
+      }
+
+      bonds.length.should.equal(1);
+
+      var balance = await contract.methods["balanceOf(address,uint256)"](
+        user1,
+        bonds[0].token
+      );
+
+      balance
+        .toString()
+        .should.equal((BigInt(COINS[0].value) * 10n ** DECIMALS).toString());
+
+      bonds[0].balance.toString().should.equal(balance.toString());
+    });
+    it("should emit transfer events", async () => {
+      const result = await contract.mint(
+        0n.toString(),
+        (BigInt(COINS[0].value) * 10n ** DECIMALS).toString(),
+        {
+          from: user1,
+        }
+      );
+
+      var bonds: Bond[] = [];
+      for await (const bond of iterateBonds(user1)) {
+        bonds.push(bond);
+      }
+
+      eventEmitted(result, "Transfer", (event: any) => {
+        return (
+          event.from === ZERO_ADDRESS &&
+          event.to === user1 &&
+          event.value.toString() ===
+            (BigInt(COINS[0].value) * 10n ** DECIMALS).toString()
+        );
+      });
+
+      eventEmitted(result, "TransferSingle", (event: any) => {
+        return (
+          event.operator == user1 &&
+          event.from === ZERO_ADDRESS &&
+          event.to === user1 &&
+          event.id.toString() === bonds[0].token.toString() &&
+          event.value.toString() ===
+            (BigInt(COINS[0].value) * 10n ** DECIMALS).toString()
+        );
+      });
+    });
     it("should combine two bonds into single bond", async () => {
       await contract.mint(0n.toString(), (100n * 10n ** DECIMALS).toString(), {
         from: user1,
       });
 
-      var { exists, bond } = (await contract.bondHead(user1)) as BondHead;
+      var { exists, bond } = (await contract.bondHead(
+        user1
+      )) as any as BondHead;
       exists.should.be.true;
       bond.toString().should.equal("0");
 
@@ -589,7 +844,10 @@ contract("BondToken", ([deployer, wisdom, user1, user2, user3]) => {
         from: user1,
       });
 
-      var { exists, bond } = (await contract.bondNext(user1, bond)) as BondNext;
+      var { exists, bond } = (await contract.bondNext(
+        user1,
+        bond
+      )) as any as BondNext;
       exists.should.be.false;
       bond.toString().should.equal("0");
 
@@ -666,8 +924,89 @@ contract("BondToken", ([deployer, wisdom, user1, user2, user3]) => {
         .toString()
         .should.equal((240_000n * 10n ** DECIMALS).toString());
     });
-    it("should set multiplier and matures");
-    it("should not take transfer fee");
+    it("should set multiplier and matures", async () => {
+      const time = (Date.now() / 1000) | 0;
+      await advanceBlockAtTime(time);
+
+      await contract.mint(
+        0n.toString(),
+        (100_000n * 10n ** DECIMALS).toString(),
+        {
+          from: user1,
+        }
+      );
+
+      const bonds: Bond[] = [];
+      for await (const bond of iterateBonds(user1)) {
+        bonds.push(bond);
+      }
+
+      bonds[0].multiplier100
+        .toString()
+        .should.equal(COINS[0].multiplier.toString());
+      bonds[0].matures
+        .toString()
+        .should.equal((time + COINS[0].matureDuration).toString());
+    });
+    it("should not take transfer fee", async () => {
+      await contract.mint(
+        0n.toString(),
+        (100_000n * 10n ** DECIMALS).toString(),
+        {
+          from: user1,
+        }
+      );
+
+      var balance = await contract.methods["balanceOf(address)"](user1);
+
+      balance.toString().should.equal((100_000n * 10n ** DECIMALS).toString());
+
+      var bonds: Bond[] = [];
+      for await (const bond of iterateBonds(user1)) {
+        bonds.push(bond);
+      }
+
+      bonds.length.should.equal(1);
+
+      var balance = await contract.methods["balanceOf(address,uint256)"](
+        user1,
+        bonds[0].token
+      );
+
+      balance.toString().should.equal((100_000n * 10n ** DECIMALS).toString());
+
+      bonds[0].balance.toString().should.equal(balance.toString());
+    });
+
+    it("should mint new bonds after one week has elapsed", async () => {
+      const startTime = ((Date.now() / 1000) | 0) + 3600;
+
+      await advanceBlockAtTime(startTime);
+      await contract.mint(0n.toString(), (100n * 10n ** DECIMALS).toString(), {
+        from: user1,
+      });
+      await advanceBlockAtTime(startTime + 3600 + 7 * 24 * 3600 + 3600);
+
+      await contract.mint(0n.toString(), (100n * 10n ** DECIMALS).toString(), {
+        from: user1,
+      });
+      await contract.mint(0n.toString(), (100n * 10n ** DECIMALS).toString(), {
+        from: user1,
+      });
+      await advanceBlockAtTime(
+        startTime + 3600 + 7 * 24 * 3600 + 7 * 24 * 3600 + 3600
+      );
+      await contract.mint(0n.toString(), (100n * 10n ** DECIMALS).toString(), {
+        from: user1,
+      });
+
+      var bonds: Bond[] = [];
+      for await (const bond of iterateBonds(user1)) {
+        bonds.push(bond);
+      }
+
+      bonds.length.should.equal(3);
+    });
   });
 
   describe("Affiliate minting", () => {
@@ -676,48 +1015,993 @@ contract("BondToken", ([deployer, wisdom, user1, user2, user3]) => {
   });
 
   describe("Token burning", () => {
-    it("should only burn bonds from message sender");
-    it("should only burn bonds with a balance");
-    it("should only burn up to balance");
-    it("should recompense the value invested with multiplier");
-    it("should debit bond");
-    it("should remove bond when balance is exhausted");
-    it("should emit transfer events");
+    beforeEach(async () => {
+      await erc20.approve(
+        contract.address,
+        (400_000_000n * 10n ** DECIMALS).toString(),
+        { from: user1 }
+      );
+
+      await erc20.transfer(
+        contract.address,
+        (1_600_000_000n * 10n ** DECIMALS).toString(),
+        { from: user3 }
+      );
+
+      for (const coin of COINS) {
+        await contract.addBondType({
+          id: 0,
+          enabled: true,
+          amount: (BigInt(coin.value) * 10n ** DECIMALS).toString(),
+          multiplier100: coin.multiplier,
+          matureDuration: BigInt(coin.matureDuration).toString(),
+          ui: {
+            color: coin.color,
+            name: coin.name,
+            style: coin.style,
+            description: coin.description ?? "",
+            visible: true,
+          },
+        });
+      }
+    });
+
+    it("should allow withdrawals after maturation", async () => {
+      const startTime = ((Date.now() / 1000) | 0) + 3600;
+
+      await advanceBlockAtTime(startTime);
+      await contract.mint(0n.toString(), (100n * 10n ** DECIMALS).toString(), {
+        from: user1,
+      });
+
+      var bonds: Bond[] = [];
+      for await (const bond of iterateBonds(user1)) {
+        bonds.push(bond);
+      }
+
+      bonds.length.should.equal(1);
+
+      await advanceBlockAtTime(Number(bonds[0].matures.toString()));
+
+      const balanceBefore = await erc20.balanceOf(user1);
+      const totalSupplyBefore = await contract.totalSupply();
+
+      totalSupplyBefore
+        .toString()
+        .should.equal((100n * 10n ** DECIMALS).toString());
+
+      await contract.burn(
+        0n.toString(),
+        bonds[0].balance.toString().toString(),
+        { from: user1 }
+      );
+
+      const balanceAfter = await erc20.balanceOf(user1);
+      const totalSupplyAfter = await contract.totalSupply();
+
+      totalSupplyAfter.toString().should.equal("0");
+
+      (BigInt(balanceAfter.toString()) - BigInt(balanceBefore.toString()))
+        .toString()
+        .should.equal(
+          (
+            (BigInt(bonds[0].balance.toString()) *
+              BigInt(bonds[0].multiplier100.toString())) /
+            100n
+          ).toString()
+        );
+
+      var bonds: Bond[] = [];
+      for await (const bond of iterateBonds(user1)) {
+        bonds.push(bond);
+      }
+
+      bonds.length.should.equal(0);
+    });
+    it("should only burn bonds from message sender", async () => {
+      const startTime = ((Date.now() / 1000) | 0) + 3600;
+
+      await advanceBlockAtTime(startTime);
+      await contract.mint(0n.toString(), (100n * 10n ** DECIMALS).toString(), {
+        from: user1,
+      });
+
+      var bonds: Bond[] = [];
+      for await (const bond of iterateBonds(user1)) {
+        bonds.push(bond);
+      }
+
+      bonds.length.should.equal(1);
+
+      await advanceBlockAtTime(Number(bonds[0].matures.toString()) + 3600);
+
+      await contract
+        .burn(0n.toString(), bonds[0].balance.toString().toString(), {
+          from: user2,
+        })
+        .should.eventually.rejectedWith();
+    });
+    it("should only burn bonds with a balance", async () => {
+      const startTime = ((Date.now() / 1000) | 0) + 3600;
+
+      await advanceBlockAtTime(startTime);
+      await contract.mint(0n.toString(), (100n * 10n ** DECIMALS).toString(), {
+        from: user1,
+      });
+
+      var bonds: Bond[] = [];
+      for await (const bond of iterateBonds(user1)) {
+        bonds.push(bond);
+      }
+
+      bonds.length.should.equal(1);
+
+      await advanceBlockAtTime(Number(bonds[0].matures.toString()) + 3600);
+
+      await contract.burn(
+        0n.toString(),
+        bonds[0].balance.toString().toString(),
+        {
+          from: user1,
+        }
+      );
+
+      await contract
+        .burn(0n.toString(), bonds[0].balance.toString().toString(), {
+          from: user1,
+        })
+        .should.eventually.rejectedWith();
+    });
+    it("should only burn up to balance", async () => {
+      const startTime = ((Date.now() / 1000) | 0) + 3600;
+
+      await advanceBlockAtTime(startTime);
+      await contract.mint(0n.toString(), (100n * 10n ** DECIMALS).toString(), {
+        from: user1,
+      });
+
+      var bonds: Bond[] = [];
+      for await (const bond of iterateBonds(user1)) {
+        bonds.push(bond);
+      }
+
+      bonds.length.should.equal(1);
+
+      await advanceBlockAtTime(Number(bonds[0].matures.toString()) + 3600);
+
+      await contract
+        .burn(
+          0n.toString(),
+          (BigInt(bonds[0].balance.toString()) + 1n).toString(),
+          { from: user1 }
+        )
+        .should.eventually.rejectedWith();
+    });
+    it("should emit transfer events", async () => {
+      const startTime = ((Date.now() / 1000) | 0) + 3600;
+
+      await advanceBlockAtTime(startTime);
+      await contract.mint(0n.toString(), (100n * 10n ** DECIMALS).toString(), {
+        from: user1,
+      });
+
+      var bonds: Bond[] = [];
+      for await (const bond of iterateBonds(user1)) {
+        bonds.push(bond);
+      }
+
+      bonds.length.should.equal(1);
+
+      await advanceBlockAtTime(Number(bonds[0].matures.toString()) + 3600);
+
+      const result = await contract.burn(
+        0n.toString(),
+        BigInt(bonds[0].balance.toString()).toString(),
+        {
+          from: user1,
+        }
+      );
+
+      eventEmitted(result, "Transfer", (args: any) => {
+        return (
+          args.from === user1 &&
+          args.to === ZERO_ADDRESS &&
+          args.value.toString() == bonds[0].balance.toString()
+        );
+      });
+
+      eventEmitted(result, "TransferSingle", (args: any) => {
+        return (
+          args.operator === user1 &&
+          args.from === user1 &&
+          args.to === ZERO_ADDRESS &&
+          args.id.toString() === bonds[0].token.toString() &&
+          args.value.toString() === bonds[0].balance.toString()
+        );
+      });
+    });
   });
 
   describe("Token linking", () => {
-    it("should require inputs to be the same length");
-    it("should require bond types to all be the same");
+    beforeEach(async () => {
+      await erc20.approve(
+        contract.address,
+        (400_000_000n * 10n ** DECIMALS).toString(),
+        { from: user1 }
+      );
+
+      for (const coin of COINS) {
+        await contract.addBondType({
+          id: 0,
+          enabled: true,
+          amount: (BigInt(coin.value) * 10n ** DECIMALS).toString(),
+          multiplier100: coin.multiplier,
+          matureDuration: BigInt(coin.matureDuration).toString(),
+          ui: {
+            color: coin.color,
+            name: coin.name,
+            style: coin.style,
+            description: coin.description ?? "",
+            visible: true,
+          },
+        });
+      }
+    });
+
+    it("should require inputs to be the same length", async () => {
+      const startTime = ((Date.now() / 1000) | 0) + 3600;
+
+      await advanceBlockAtTime(startTime);
+      await contract.mint(0n.toString(), (100n * 10n ** DECIMALS).toString(), {
+        from: user1,
+      });
+      await advanceBlockAtTime(startTime + 3600 + 7 * 24 * 3600 + 3600);
+
+      await contract.mint(0n.toString(), (100n * 10n ** DECIMALS).toString(), {
+        from: user1,
+      });
+
+      await advanceBlockAtTime(
+        startTime + 3600 + 7 * 24 * 3600 + 7 * 24 * 3600 + 3600
+      );
+      await contract.mint(0n.toString(), (100n * 10n ** DECIMALS).toString(), {
+        from: user1,
+      });
+
+      var bonds: Bond[] = [];
+      for await (const bond of iterateBonds(user1)) {
+        bonds.push(bond);
+      }
+
+      bonds.length.should.equal(3);
+
+      await contract
+        .link(
+          bonds.map((b) => b.id),
+          bonds.map((b) => b.balance).slice(1),
+          { from: user1 }
+        )
+        .should.eventually.rejectedWith();
+
+      await contract.link(
+        bonds.map((b) => b.id.toString()),
+        bonds.map((b) => b.balance.toString()),
+        { from: user1 }
+      );
+
+      var bonds: Bond[] = [];
+      for await (const bond of iterateBonds(user1)) {
+        bonds.push(bond);
+      }
+
+      bonds.length.should.equal(1);
+
+      bonds[0].balance
+        .toString()
+        .should.equal((300n * 10n ** DECIMALS).toString());
+    });
+
+    it("should require bond types to all be the same", async () => {
+      const startTime = ((Date.now() / 1000) | 0) + 3600;
+
+      await advanceBlockAtTime(startTime);
+      await contract.mint(0n.toString(), (100n * 10n ** DECIMALS).toString(), {
+        from: user1,
+      });
+      await advanceBlockAtTime(startTime + 3600 + 7 * 24 * 3600 + 3600);
+
+      await contract.mint(0n.toString(), (100n * 10n ** DECIMALS).toString(), {
+        from: user1,
+      });
+
+      await contract.mint(1n.toString(), (100n * 10n ** DECIMALS).toString(), {
+        from: user1,
+      });
+
+      await advanceBlockAtTime(
+        startTime + 3600 + 7 * 24 * 3600 + 7 * 24 * 3600 + 3600
+      );
+      await contract.mint(0n.toString(), (100n * 10n ** DECIMALS).toString(), {
+        from: user1,
+      });
+
+      var bonds: Bond[] = [];
+      for await (const bond of iterateBonds(user1)) {
+        bonds.push(bond);
+      }
+
+      bonds.length.should.equal(4);
+
+      await contract
+        .link(
+          bonds.map((b) => b.id),
+          bonds.map((b) => b.balance)
+        )
+        .should.eventually.rejectedWith();
+
+      await contract.link(
+        bonds
+          .filter((b) => b.bondType.toString() === 0n.toString())
+          .map((b) => b.id.toString()),
+        bonds
+          .filter((b) => b.bondType.toString() === 0n.toString())
+          .map((b) => b.balance.toString()),
+        { from: user1 }
+      );
+
+      var bonds: Bond[] = [];
+      for await (const bond of iterateBonds(user1)) {
+        bonds.push(bond);
+      }
+
+      bonds.length.should.equal(1);
+
+      bonds[0].balance
+        .toString()
+        .should.equal((300n * 10n ** DECIMALS).toString());
+    });
     it("should set multiplier to lowest of all the bonds");
-    it("should set maturity to highest of all the bonds");
-    it("should create a new bond after debiting the existing bonds");
-    it("should delete existing bonds if they are exhausted");
-    it("should not take tax for token linking");
+    it("should set maturity to highest of all the bonds", async () => {
+      const startTime = Number((await web3.eth.getBlock("latest")).timestamp);
+
+      await advanceBlockAtTime(startTime);
+      await contract.mint(0n.toString(), (100n * 10n ** DECIMALS).toString(), {
+        from: user1,
+      });
+      await advanceBlockAtTime(startTime + 7 * 24 * 3600 + 3600);
+
+      await contract.mint(0n.toString(), (100n * 10n ** DECIMALS).toString(), {
+        from: user1,
+      });
+      await contract.mint(0n.toString(), (100n * 10n ** DECIMALS).toString(), {
+        from: user1,
+      });
+      await advanceBlockAtTime(
+        startTime + 7 * 24 * 3600 + 3600 + 7 * 24 * 3600 + 3600
+      );
+      await contract.mint(0n.toString(), (100n * 10n ** DECIMALS).toString(), {
+        from: user1,
+      });
+
+      var bonds: Bond[] = [];
+      for await (const bond of iterateBonds(user1)) {
+        bonds.push(bond);
+      }
+
+      await contract.link(
+        bonds.map((b) => b.id.toString()),
+        bonds.map((b) => b.balance.toString()),
+        { from: user1 }
+      );
+
+      var bonds: Bond[] = [];
+      for await (const bond of iterateBonds(user1)) {
+        bonds.push(bond);
+      }
+
+      bonds.length.should.equal(1);
+
+      bonds[0].matures
+        .toString()
+        .should.equal(
+          (
+            startTime +
+            7 * 24 * 3600 +
+            3600 +
+            7 * 24 * 3600 +
+            3600 +
+            COINS[0].matureDuration
+          ).toString()
+        );
+    });
   });
 
   describe("Token splitting", () => {
-    it("should split the bonds in the proportions specified");
-    it("should delete the existing bond");
+    beforeEach(async () => {
+      await erc20.approve(
+        contract.address,
+        (400_000_000n * 10n ** DECIMALS).toString(),
+        { from: user1 }
+      );
+
+      for (const coin of COINS) {
+        await contract.addBondType({
+          id: 0,
+          enabled: true,
+          amount: (BigInt(coin.value) * 10n ** DECIMALS).toString(),
+          multiplier100: coin.multiplier,
+          matureDuration: BigInt(coin.matureDuration).toString(),
+          ui: {
+            color: coin.color,
+            name: coin.name,
+            style: coin.style,
+            description: coin.description ?? "",
+            visible: true,
+          },
+        });
+      }
+    });
+
+    it("should split the bonds in the proportions specified", async () => {
+      await contract.mint(0n.toString(), (100n * 10n ** DECIMALS).toString(), {
+        from: user1,
+      });
+
+      var bonds: Bond[] = [];
+      for await (const bond of iterateBonds(user1)) {
+        bonds.push(bond);
+      }
+
+      bonds.length.should.equal(1);
+
+      await contract.split(
+        bonds[0].id.toString(),
+        [
+          1n.toString(),
+          5n.toString(),
+          (100n * 10n ** DECIMALS - 6n).toString(),
+        ],
+        { from: user1 }
+      );
+
+      var bonds: Bond[] = [];
+      for await (const bond of iterateBonds(user1)) {
+        bonds.push(bond);
+      }
+
+      bonds.length.should.equal(3);
+      bonds[0].id.toString().should.not.equal(0n.toString());
+      bonds[0].balance
+        .toString()
+        .should.equal((100n * 10n ** DECIMALS - 6n).toString());
+      bonds[1].balance.toString().should.equal(5n.toString());
+      bonds[2].balance.toString().should.equal(1n.toString());
+    });
   });
 
   describe("Token forging", () => {
+    beforeEach(async () => {
+      await erc20.approve(
+        contract.address,
+        (400_000_000_000n * 10n ** DECIMALS).toString(),
+        { from: user1 }
+      );
+
+      for (const coin of COINS) {
+        await contract.addBondType({
+          id: 0,
+          enabled: true,
+          amount: (BigInt(coin.value) * 10n ** DECIMALS).toString(),
+          multiplier100: coin.multiplier,
+          matureDuration: BigInt(coin.matureDuration).toString(),
+          ui: {
+            color: coin.color,
+            name: coin.name,
+            style: coin.style,
+            description: coin.description ?? "",
+            visible: true,
+          },
+        });
+      }
+    });
+
+    it("should forge based on at least 15 requirements", async () => {
+      await contract.addBondForge({
+        description: "forge-1",
+        enabled: true,
+        name: "forge-1",
+        requirements: [
+          ...COINS.slice(1).map((coin, i) => ({
+            bondType: i + 1,
+            count: 1,
+            balance: (BigInt(coin.value) * 10n ** DECIMALS).toString(),
+            multiplier100: coin.multiplier.toString(),
+          })),
+          {
+            bondType: 0,
+            count: 3,
+            balance: (BigInt(COINS[0].value) * 10n ** DECIMALS).toString(),
+            multiplier100: COINS[0].multiplier.toString(),
+          },
+        ],
+        result: {
+          bondType: 0,
+          matureDuration: 100,
+          multiplier100: 50000,
+        },
+        id: 0,
+      });
+      const startTime = ((Date.now() / 1000) | 0) + 3600;
+
+      await advanceBlockAtTime(startTime);
+
+      for (const i in COINS) {
+        await contract.mint(
+          i.toString(),
+          (BigInt(COINS[i].value) * 10n ** DECIMALS).toString(),
+          {
+            from: user1,
+          }
+        );
+      }
+
+      await advanceBlockAtTime(startTime + 3600 + (7 * 24 * 3600 + 3600) * 1);
+      await contract.mint(
+        0n.toString(),
+        (BigInt(COINS[0].value) * 10n ** DECIMALS).toString(),
+        {
+          from: user1,
+        }
+      );
+      await advanceBlockAtTime(startTime + 3600 + (7 * 24 * 3600 + 3600) * 2);
+      await contract.mint(
+        0n.toString(),
+        (BigInt(COINS[0].value) * 10n ** DECIMALS).toString(),
+        {
+          from: user1,
+        }
+      );
+
+      await advanceBlockAtTime(startTime + 3600 + (7 * 24 * 3600 + 3600) * 3);
+
+      var bonds: Bond[] = [];
+      for await (const bond of iterateBonds(user1)) {
+        bonds.push(bond);
+      }
+
+      bonds.length.should.equal(COINS.length + 2);
+
+      await contract.forge(
+        0n.toString(),
+        bonds.map((b) => b.id.toString()),
+        bonds.map((b) => b.balance.toString()),
+        { from: user1 }
+      );
+
+      var bonds: Bond[] = [];
+      for await (const bond of iterateBonds(user1)) {
+        bonds.push(bond);
+      }
+
+      bonds.length.should.equal(1);
+      bonds[0].id.toString().should.equal((COINS.length + 2).toString());
+      bonds[0].balance
+        .toString()
+        .should.equal(
+          (
+            [COINS[0], COINS[0], ...COINS].reduce(
+              (a, b) => a + BigInt(b.value),
+              0n
+            ) *
+            10n ** DECIMALS
+          ).toString()
+        );
+      bonds[0].multiplier100.toString().should.equal(50000n.toString());
+      bonds[0].matures
+        .toString()
+        .should.equal(
+          (startTime + 3600 + (7 * 24 * 3600 + 3600) * 3 + 100).toString()
+        );
+    });
+
+    it("should forge based on balance requirement", async () => {
+      await contract.addBondForge({
+        description: "forge-1",
+        enabled: true,
+        name: "forge-1",
+        requirements: [
+          ...COINS.slice(1).map((coin, i) => ({
+            bondType: i + 1,
+            count: 1,
+            balance: (BigInt(coin.value) * 10n ** DECIMALS).toString(),
+            multiplier100: coin.multiplier.toString(),
+          })),
+          {
+            bondType: 0,
+            count: 3,
+            balance: (BigInt(COINS[0].value) * 10n ** DECIMALS + 1n).toString(),
+            multiplier100: COINS[0].multiplier.toString(),
+          },
+        ],
+        result: {
+          bondType: 0,
+          matureDuration: 100,
+          multiplier100: 50000,
+        },
+        id: 0,
+      });
+      const startTime = ((Date.now() / 1000) | 0) + 3600;
+
+      await advanceBlockAtTime(startTime);
+
+      for (const i in COINS) {
+        await contract.mint(
+          i.toString(),
+          (BigInt(COINS[i].value) * 10n ** DECIMALS).toString(),
+          {
+            from: user1,
+          }
+        );
+      }
+
+      await advanceBlockAtTime(startTime + 3600 + (7 * 24 * 3600 + 3600) * 1);
+      await contract.mint(
+        0n.toString(),
+        (BigInt(COINS[0].value) * 10n ** DECIMALS).toString(),
+        {
+          from: user1,
+        }
+      );
+      await advanceBlockAtTime(startTime + 3600 + (7 * 24 * 3600 + 3600) * 2);
+      await contract.mint(
+        0n.toString(),
+        (BigInt(COINS[0].value) * 10n ** DECIMALS).toString(),
+        {
+          from: user1,
+        }
+      );
+
+      await advanceBlockAtTime(startTime + 3600 + (7 * 24 * 3600 + 3600) * 3);
+
+      var bonds: Bond[] = [];
+      for await (const bond of iterateBonds(user1)) {
+        bonds.push(bond);
+      }
+
+      bonds.length.should.equal(COINS.length + 2);
+
+      await contract
+        .forge(
+          0n.toString(),
+          bonds.map((b) => b.id.toString()),
+          bonds.map((b) => b.balance.toString()),
+          { from: user1 }
+        )
+        .should.eventually.rejectedWith();
+    });
+
+    it("should forge based on bond type requirement", async () => {
+      await contract.addBondForge({
+        description: "forge-1",
+        enabled: true,
+        name: "forge-1",
+        requirements: [
+          ...COINS.slice(1).map((coin, i) => ({
+            bondType: i + 1,
+            count: 1,
+            balance: (BigInt(coin.value) * 10n ** DECIMALS).toString(),
+            multiplier100: coin.multiplier.toString(),
+          })),
+          {
+            bondType: 0,
+            count: 3,
+            balance: (BigInt(COINS[0].value) * 10n ** DECIMALS).toString(),
+            multiplier100: COINS[0].multiplier.toString(),
+          },
+        ],
+        result: {
+          bondType: 0,
+          matureDuration: 100,
+          multiplier100: 50000,
+        },
+        id: 0,
+      });
+      const startTime = ((Date.now() / 1000) | 0) + 3600;
+
+      await advanceBlockAtTime(startTime);
+
+      for (const i in COINS.slice(0, COINS.length - 1)) {
+        await contract.mint(
+          i.toString(),
+          (BigInt(COINS[i].value) * 10n ** DECIMALS).toString(),
+          {
+            from: user1,
+          }
+        );
+      }
+
+      await advanceBlockAtTime(startTime + 3600 + (7 * 24 * 3600 + 3600) * 1);
+      await contract.mint(
+        0n.toString(),
+        (BigInt(COINS[0].value) * 10n ** DECIMALS).toString(),
+        {
+          from: user1,
+        }
+      );
+      await advanceBlockAtTime(startTime + 3600 + (7 * 24 * 3600 + 3600) * 2);
+      await contract.mint(
+        0n.toString(),
+        (BigInt(COINS[0].value) * 10n ** DECIMALS).toString(),
+        {
+          from: user1,
+        }
+      );
+
+      await advanceBlockAtTime(startTime + 3600 + (7 * 24 * 3600 + 3600) * 3);
+
+      var bonds: Bond[] = [];
+      for await (const bond of iterateBonds(user1)) {
+        bonds.push(bond);
+      }
+
+      bonds.length.should.equal(COINS.length + 1);
+
+      await contract
+        .forge(
+          0n.toString(),
+          bonds.map((b) => b.id.toString()),
+          bonds.map((b) => b.balance.toString()),
+          { from: user1 }
+        )
+        .should.eventually.rejectedWith();
+    });
     it("should forge based on multiplier requirement");
-    it("should forge based on bond type requirement");
-    it("should forge based on balance requirement");
-    it("should forge based on count requirement");
-    it("should correctly set maturation");
-    it("should correctly set multiplier");
-    it("should produce forged token");
+    it("should forge based on count requirement", async () => {
+      await contract.addBondForge({
+        description: "forge-1",
+        enabled: true,
+        name: "forge-1",
+        requirements: [
+          ...COINS.slice(1).map((coin, i) => ({
+            bondType: i + 1,
+            count: 1,
+            balance: (BigInt(coin.value) * 10n ** DECIMALS).toString(),
+            multiplier100: coin.multiplier.toString(),
+          })),
+          {
+            bondType: 0,
+            count: 4,
+            balance: (BigInt(COINS[0].value) * 10n ** DECIMALS).toString(),
+            multiplier100: COINS[0].multiplier.toString(),
+          },
+        ],
+        result: {
+          bondType: 0,
+          matureDuration: 100,
+          multiplier100: 50000,
+        },
+        id: 0,
+      });
+      const startTime = ((Date.now() / 1000) | 0) + 3600;
+
+      await advanceBlockAtTime(startTime);
+
+      for (const i in COINS) {
+        await contract.mint(
+          i.toString(),
+          (BigInt(COINS[i].value) * 10n ** DECIMALS).toString(),
+          {
+            from: user1,
+          }
+        );
+      }
+
+      await advanceBlockAtTime(startTime + 3600 + (7 * 24 * 3600 + 3600) * 1);
+      await contract.mint(
+        0n.toString(),
+        (BigInt(COINS[0].value) * 10n ** DECIMALS).toString(),
+        {
+          from: user1,
+        }
+      );
+      await advanceBlockAtTime(startTime + 3600 + (7 * 24 * 3600 + 3600) * 2);
+      await contract.mint(
+        0n.toString(),
+        (BigInt(COINS[0].value) * 10n ** DECIMALS).toString(),
+        {
+          from: user1,
+        }
+      );
+
+      await advanceBlockAtTime(startTime + 3600 + (7 * 24 * 3600 + 3600) * 3);
+
+      var bonds: Bond[] = [];
+      for await (const bond of iterateBonds(user1)) {
+        bonds.push(bond);
+      }
+
+      bonds.length.should.equal(COINS.length + 2);
+
+      await contract
+        .forge(
+          0n.toString(),
+          bonds.map((b) => b.id.toString()),
+          bonds.map((b) => b.balance.toString()),
+          { from: user1 }
+        )
+        .should.eventually.rejectedWith();
+    });
   });
 
-  describe("Token gifting", () => {
-    it("should require signature");
-    it("should allow account to be different to message sender");
-    it("should result in gifted bond");
-  });
+  describe.only("Token gifting", () => {
+    beforeEach(async () => {
+      await erc20.approve(
+        contract.address,
+        (400_000_000_000n * 10n ** DECIMALS).toString(),
+        { from: user1 }
+      );
 
-  describe("Donating", () => {
-    it("should allow donated funds to be used for withdrawals");
+      for (const coin of COINS) {
+        await contract.addBondType({
+          id: 0,
+          enabled: true,
+          amount: (BigInt(coin.value) * 10n ** DECIMALS).toString(),
+          multiplier100: coin.multiplier,
+          matureDuration: BigInt(coin.matureDuration).toString(),
+          ui: {
+            color: coin.color,
+            name: coin.name,
+            style: coin.style,
+            description: coin.description ?? "",
+            visible: true,
+          },
+        });
+      }
+    });
+
+    it("should gift", async () => {
+      const _signer = new Signer({
+        keyStore: {
+          async get(signerAddress: string): Promise<string> {
+            return signer.privateKey;
+          },
+        },
+        address: contract.address,
+        web3,
+      });
+
+      const expires = ((Date.now() / 1000) | 0) + 15;
+
+      const signature = await _signer.sign(
+        contract.abi,
+        "gift",
+        user1,
+        user1,
+        0n.toString(),
+        (100_000n * 10n ** DECIMALS).toString(),
+        expires
+      );
+
+      await contract.gift(
+        user1,
+        0n.toString(),
+        (100_000n * 10n ** DECIMALS).toString(),
+        expires,
+        signature,
+        { from: user1 }
+      );
+    });
+
+    it("should require signature", async () => {
+      const _signer = new Signer({
+        keyStore: {
+          async get(signerAddress: string): Promise<string> {
+            return signer.privateKey;
+          },
+        },
+        address: contract.address,
+        web3,
+      });
+
+      const expires = ((Date.now() / 1000) | 0) + 15;
+
+      const signature = await _signer.sign(
+        contract.abi,
+        "gift",
+        user1,
+        user1,
+        0n.toString(),
+        (100_000n * 10n ** DECIMALS).toString(),
+        expires
+      );
+
+      signature.v = 0x34;
+
+      await contract
+        .gift(
+          user1,
+          0n.toString(),
+          (100_000n * 10n ** DECIMALS).toString(),
+          expires,
+          signature,
+          { from: user1 }
+        )
+        .should.eventually.rejectedWith();
+    });
+    it("should allow account to be different to message sender", async () => {
+      const _signer = new Signer({
+        keyStore: {
+          async get(signerAddress: string): Promise<string> {
+            return signer.privateKey;
+          },
+        },
+        address: contract.address,
+        web3,
+      });
+
+      const expires = ((Date.now() / 1000) | 0) + 15;
+
+      const signature = await _signer.sign(
+        contract.abi,
+        "gift",
+        user2,
+        user1,
+        0n.toString(),
+        (100_000n * 10n ** DECIMALS).toString(),
+        expires
+      );
+
+      await contract.gift(
+        user1,
+        0n.toString(),
+        (100_000n * 10n ** DECIMALS).toString(),
+        expires,
+        signature,
+        { from: user2 }
+      );
+    });
+    it("should result in gifted bond", async () => {
+      const _signer = new Signer({
+        keyStore: {
+          async get(signerAddress: string): Promise<string> {
+            return signer.privateKey;
+          },
+        },
+        address: contract.address,
+        web3,
+      });
+
+      const expires = ((Date.now() / 1000) | 0) + 15;
+
+      const signature = await _signer.sign(
+        contract.abi,
+        "gift",
+        user2,
+        user1,
+        0n.toString(),
+        (100_000n * 10n ** DECIMALS).toString(),
+        expires
+      );
+
+      await contract.gift(
+        user1,
+        0n.toString(),
+        (100_000n * 10n ** DECIMALS).toString(),
+        expires,
+        signature,
+        { from: user2 }
+      );
+
+      var bonds: Bond[] = [];
+      for await (const bond of iterateBonds(user1)) {
+        bonds.push(bond);
+      }
+
+      bonds.length.should.equal(1);
+      bonds[0].balance
+        .toString()
+        .should.equal((100_000n * 10n ** DECIMALS).toString());
+    });
   });
 
   describe("Withdraw", () => {
@@ -725,25 +2009,395 @@ contract("BondToken", ([deployer, wisdom, user1, user2, user3]) => {
   });
 
   describe("ERC20 basic transfer functions", () => {
-    it("should emit a transfer event");
-    it("should transfer total balance");
-    it("should transfer smallest unit");
-    it("should not transfer more than available balance");
-    it("should not transfer to zero address");
-    it("should not transfer tokens to contract");
+    beforeEach(async () => {
+      await erc20.approve(
+        contract.address,
+        (400_000_000_000n * 10n ** DECIMALS).toString(),
+        { from: user1 }
+      );
+
+      for (const coin of COINS) {
+        await contract.addBondType({
+          id: 0,
+          enabled: true,
+          amount: (BigInt(coin.value) * 10n ** DECIMALS).toString(),
+          multiplier100: coin.multiplier,
+          matureDuration: BigInt(coin.matureDuration).toString(),
+          ui: {
+            color: coin.color,
+            name: coin.name,
+            style: coin.style,
+            description: coin.description ?? "",
+            visible: true,
+          },
+        });
+      }
+
+      await contract.mint(
+        0n.toString(),
+        (100_000n * 10n ** DECIMALS).toString(),
+        {
+          from: user1,
+        }
+      );
+    });
+
+    it("should emit a transfer event", async () => {
+      const result = await contract.transfer(
+        user2,
+        (50_000n * 10n ** DECIMALS).toString(),
+        {
+          from: user1,
+        }
+      );
+
+      var bonds1: Bond[] = [];
+      for await (const bond of iterateBonds(user1)) {
+        bonds1.push(bond);
+      }
+
+      var bonds2: Bond[] = [];
+      for await (const bond of iterateBonds(user2)) {
+        bonds2.push(bond);
+      }
+
+      const user1Balance = await contract.methods["balanceOf(address)"](user1);
+      const user2Balance = await contract.methods["balanceOf(address)"](user2);
+
+      user1Balance
+        .toString()
+        .should.equal((50_000n * 10n ** DECIMALS).toString());
+      user2Balance
+        .toString()
+        .should.equal((45_000n * 10n ** DECIMALS).toString());
+
+      eventEmitted(result, "TransferFee", (event: any) => {
+        return (
+          event.operator === user1 &&
+          event.from === user1 &&
+          event.to === user2 &&
+          event.value.toString() === (50_000n * 10n ** DECIMALS).toString() &&
+          event.fee.toString() === (5_000n * 10n ** DECIMALS).toString()
+        );
+      });
+
+      eventEmitted(result, "Transfer", (event: any) => {
+        return (
+          event.from === user1 &&
+          event.to === user2 &&
+          event.value.toString() === (45_000n * 10n ** DECIMALS).toString()
+        );
+      });
+
+      eventEmitted(result, "TransferSingle", (event: any) => {
+        return (
+          event.operator === user1 &&
+          event.from === user1 &&
+          event.to === ZERO_ADDRESS &&
+          event.id.toString() === bonds1[0].token.toString() &&
+          event.value.toString() === (45_000n * 10n ** DECIMALS).toString()
+        );
+      });
+
+      eventEmitted(result, "TransferSingle", (event: any) => {
+        return (
+          event.operator === user1 &&
+          event.from === ZERO_ADDRESS &&
+          event.to === user2 &&
+          event.id.toString() === bonds2[0].token.toString() &&
+          event.value.toString() === (45_000n * 10n ** DECIMALS).toString()
+        );
+      });
+    });
+    it("should transfer total balance", async () => {
+      await contract.transfer(user2, (100_000n * 10n ** DECIMALS).toString(), {
+        from: user1,
+      });
+
+      var bonds1: Bond[] = [];
+      for await (const bond of iterateBonds(user1)) {
+        bonds1.push(bond);
+      }
+
+      var bonds2: Bond[] = [];
+      for await (const bond of iterateBonds(user2)) {
+        bonds2.push(bond);
+      }
+
+      const user1Balance = await contract.methods["balanceOf(address)"](user1);
+      const user2Balance = await contract.methods["balanceOf(address)"](user2);
+
+      user1Balance.toString().should.equal((0n * 10n ** DECIMALS).toString());
+      user2Balance
+        .toString()
+        .should.equal((90_000n * 10n ** DECIMALS).toString());
+    });
+    it("should transfer smallest unit", async () => {
+      await contract.transfer(user2, 1n.toString(), {
+        from: user1,
+      });
+
+      var bonds1: Bond[] = [];
+      for await (const bond of iterateBonds(user1)) {
+        bonds1.push(bond);
+      }
+
+      var bonds2: Bond[] = [];
+      for await (const bond of iterateBonds(user2)) {
+        bonds2.push(bond);
+      }
+
+      const user1Balance = await contract.methods["balanceOf(address)"](user1);
+      const user2Balance = await contract.methods["balanceOf(address)"](user2);
+
+      user1Balance
+        .toString()
+        .should.equal((100_000n * 10n ** DECIMALS - 1n).toString());
+      user2Balance.toString().should.equal(1n.toString());
+    });
+    it("should not transfer more than available balance", async () => {
+      await contract
+        .transfer(user2, (100_000n * 10n ** DECIMALS + 1n).toString(), {
+          from: user1,
+        })
+        .should.eventually.rejectedWith();
+    });
+    it("should not transfer to zero address", async () => {
+      await contract
+        .transfer(ZERO_ADDRESS, (50_000n * 10n ** DECIMALS).toString(), {
+          from: user1,
+        })
+        .should.eventually.rejectedWith();
+    });
+    it("should not transfer tokens to contract", async () => {
+      await contract
+        .transfer(contract.address, (50_000n * 10n ** DECIMALS).toString(), {
+          from: user1,
+        })
+        .should.eventually.rejectedWith();
+    });
   });
 
   describe("ERC20 basic approvals", () => {
-    it("should emit an approval event");
-    it("should allow maximum uint256");
-    it("should not transferFrom more than available balance");
-    it("should deduct transferFrom amount from approval");
-    it("should transferFrom smallest unit");
-    it("should transferFrom available balance");
-    it("should get the allowance");
-    it(
-      "should set approve tokens absolutely rather than adding to the approval"
-    );
+    beforeEach(async () => {
+      await erc20.approve(
+        contract.address,
+        (400_000_000_000n * 10n ** DECIMALS).toString(),
+        { from: user1 }
+      );
+
+      for (const coin of COINS) {
+        await contract.addBondType({
+          id: 0,
+          enabled: true,
+          amount: (BigInt(coin.value) * 10n ** DECIMALS).toString(),
+          multiplier100: coin.multiplier,
+          matureDuration: BigInt(coin.matureDuration).toString(),
+          ui: {
+            color: coin.color,
+            name: coin.name,
+            style: coin.style,
+            description: coin.description ?? "",
+            visible: true,
+          },
+        });
+      }
+
+      await contract.mint(
+        0n.toString(),
+        (100_000n * 10n ** DECIMALS).toString(),
+        {
+          from: user1,
+        }
+      );
+    });
+
+    it("should emit an approval event", async () => {
+      const result = await contract.approve(
+        user2,
+        (100_000n * 10n ** DECIMALS).toString(),
+        {
+          from: user1,
+        }
+      );
+
+      var user1Balance = await contract.methods["balanceOf(address)"](user1);
+      var user2Balance = await contract.methods["balanceOf(address)"](user2);
+
+      user1Balance
+        .toString()
+        .should.equal((100_000n * 10n ** DECIMALS).toString());
+      user2Balance.toString().should.equal(0n.toString());
+
+      await contract.transferFrom(
+        user1,
+        user2,
+        (100_000n * 10n ** DECIMALS).toString(),
+        { from: user2 }
+      );
+
+      var user1Balance = await contract.methods["balanceOf(address)"](user1);
+      var user2Balance = await contract.methods["balanceOf(address)"](user2);
+
+      user1Balance.toString().should.equal(0n.toString());
+      user2Balance
+        .toString()
+        .should.equal((90_000n * 10n ** DECIMALS).toString());
+
+      eventEmitted(result, "Approval", (event: any) => {
+        return (
+          event.owner === user1 &&
+          event.spender === user2 &&
+          event.value.toString() === (100_000n * 10n ** DECIMALS).toString()
+        );
+      });
+    });
+    it("should allow maximum uint256", async () => {
+      const result = await contract.approve(user2, MAX_UINT256.toString(), {
+        from: user1,
+      });
+
+      var user1Balance = await contract.methods["balanceOf(address)"](user1);
+      var user2Balance = await contract.methods["balanceOf(address)"](user2);
+
+      user1Balance
+        .toString()
+        .should.equal((100_000n * 10n ** DECIMALS).toString());
+      user2Balance.toString().should.equal(0n.toString());
+
+      await contract.transferFrom(
+        user1,
+        user2,
+        (100_000n * 10n ** DECIMALS).toString(),
+        { from: user2 }
+      );
+
+      var user1Balance = await contract.methods["balanceOf(address)"](user1);
+      var user2Balance = await contract.methods["balanceOf(address)"](user2);
+
+      user1Balance.toString().should.equal(0n.toString());
+      user2Balance
+        .toString()
+        .should.equal((90_000n * 10n ** DECIMALS).toString());
+
+      eventEmitted(result, "Approval", (event: any) => {
+        return (
+          event.owner === user1 &&
+          event.spender === user2 &&
+          event.value.toString() === MAX_UINT256.toString()
+        );
+      });
+    });
+    it("should not transferFrom more than available balance", async () => {
+      const result = await contract.approve(user2, MAX_UINT256.toString(), {
+        from: user1,
+      });
+
+      var user1Balance = await contract.methods["balanceOf(address)"](user1);
+      var user2Balance = await contract.methods["balanceOf(address)"](user2);
+
+      user1Balance
+        .toString()
+        .should.equal((100_000n * 10n ** DECIMALS).toString());
+      user2Balance.toString().should.equal(0n.toString());
+
+      await contract
+        .transferFrom(
+          user1,
+          user2,
+          (100_000n * 10n ** DECIMALS + 1n).toString(),
+          { from: user2 }
+        )
+        .should.eventually.rejectedWith();
+    });
+    it("should deduct transferFrom amount from approval", async () => {
+      await contract.approve(user2, (100_000n * 10n ** DECIMALS).toString(), {
+        from: user1,
+      });
+
+      var user1Balance = await contract.methods["balanceOf(address)"](user1);
+      var user2Balance = await contract.methods["balanceOf(address)"](user2);
+
+      var allowance = await contract.allowance(user1, user2);
+
+      allowance
+        .toString()
+        .should.equal((100_000n * 10n ** DECIMALS).toString().toString());
+
+      user1Balance
+        .toString()
+        .should.equal((100_000n * 10n ** DECIMALS).toString());
+      user2Balance.toString().should.equal(0n.toString());
+
+      await contract.transferFrom(
+        user1,
+        user2,
+        (50_000n * 10n ** DECIMALS).toString(),
+        { from: user2 }
+      );
+
+      var allowance = await contract.allowance(user1, user2);
+
+      allowance
+        .toString()
+        .should.equal((50_000n * 10n ** DECIMALS).toString().toString());
+    });
+    it("should transferFrom smallest unit", async () => {
+      const result = await contract.approve(user2, 1n.toString(), {
+        from: user1,
+      });
+
+      var user1Balance = await contract.methods["balanceOf(address)"](user1);
+      var user2Balance = await contract.methods["balanceOf(address)"](user2);
+
+      user1Balance
+        .toString()
+        .should.equal((100_000n * 10n ** DECIMALS).toString());
+      user2Balance.toString().should.equal(0n.toString());
+
+      var allowance = await contract.allowance(user1, user2);
+
+      allowance.toString().should.equal(1n.toString());
+
+      await contract.transferFrom(user1, user2, 1n.toString(), { from: user2 });
+
+      var allowance = await contract.allowance(user1, user2);
+
+      allowance.toString().should.equal(0n.toString());
+
+      var user1Balance = await contract.methods["balanceOf(address)"](user1);
+      var user2Balance = await contract.methods["balanceOf(address)"](user2);
+
+      user1Balance
+        .toString()
+        .should.equal((100_000n * 10n ** DECIMALS - 1n).toString());
+      user2Balance.toString().should.equal(1n.toString());
+
+      eventEmitted(result, "Approval", (event: any) => {
+        return (
+          event.owner === user1 &&
+          event.spender === user2 &&
+          event.value.toString() === 1n.toString()
+        );
+      });
+    });
+    it("should set approve tokens absolutely rather than adding to the approval", async () => {
+      await contract.approve(user2, 1n.toString(), {
+        from: user1,
+      });
+
+      var allowance = await contract.allowance(user1, user2);
+
+      allowance.toString().should.equal(1n.toString());
+
+      await contract.approve(user2, 2n.toString(), {
+        from: user1,
+      });
+
+      var allowance = await contract.allowance(user1, user2);
+
+      allowance.toString().should.equal(2n.toString());
+    });
   });
 
   describe("NFT integration", () => {
@@ -751,10 +2405,12 @@ contract("BondToken", ([deployer, wisdom, user1, user2, user3]) => {
     it("should allow safe transfers");
     it("should prevent safe transfers to non-conformant contract");
     it("should do safe batch transfers");
-    it("should approve maximum ERC20 when doing approvals");
+    it("❗️ should approve maximum ERC20 when doing approvals");
     it("should not transferFrom more than available balance");
-    it("should emit events from transfer");
-    it("should emit batch events and not single events from batch transfer");
+    it("❗️ should emit events from transfer");
+    it.skip(
+      "❕WONTFIX: should emit batch events and not single events from batch transfer"
+    );
     it("should concatenate the url correctly");
   });
 
