@@ -17,7 +17,7 @@ module.exports = {
       settings: {
         optimizer: {
           enabled: true,
-          runs: 1,
+          runs: 800,
         },
       },
     },
@@ -37,6 +37,15 @@ module.exports = {
   api_keys: {
     etherscan: process.env.ETHERSCAN_API_KEY,
     polygonscan: process.env.POLYGONSCAN_API_KEY,
+  },
+  mocha: {
+    reporter: "eth-gas-reporter",
+    reporterOptions: {
+      currency: "USD",
+      token: "MATIC",
+      excludeContracts: ["Token"],
+      src: "src/contracts",
+    },
   },
   plugins: ["truffle-plugin-verify"],
 };
