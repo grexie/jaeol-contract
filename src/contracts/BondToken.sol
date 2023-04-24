@@ -36,8 +36,6 @@ contract BondToken is
   string public override(IERC20Metadata) name;
   string public override(IERC20Metadata) symbol;
 
-  mapping(address => bool) public adminPaused;
-
   address public signer;
 
   struct Config {
@@ -136,23 +134,6 @@ contract BondToken is
 
   mapping(address => mapping(address => uint256)) public allowances;
 
-  event ConfigChanged(Config from, Config to);
-  event TransferFee(
-    address indexed operator,
-    address indexed from,
-    address indexed to,
-    uint256 value,
-    uint256 fee
-  );
-  event AccountPaused(address indexed account);
-  event AccountResumed(address indexed account);
-  event AdminPaused(address indexed account);
-  event AdminResumed(address indexed account);
-  event AddedBondType(BondType bondType);
-  event ChangedBondType(BondType from, BondType to);
-  event AddedBondForge(BondForge bondForge);
-  event ChangedBondForge(BondForge from, BondForge to);
-
   constructor(
     string memory name_,
     string memory symbol_,
@@ -169,7 +150,6 @@ contract BondToken is
   }
 
   function setConfig(Config calldata config_) external onlyOwner {
-    emit ConfigChanged(config, config_);
     config = config_;
     _usdt = IERC20Metadata(config_.usdt);
   }
@@ -180,14 +160,12 @@ contract BondToken is
     uint256 id = nextBondType++;
     bondTypes[id] = bondType_;
     bondTypes[id].id = id;
-    emit AddedBondType(bondTypes[id]);
     return id;
   }
 
   function updateBondType(
     BondType calldata bondType
   ) external onlyOwner returns (bool) {
-    emit ChangedBondType(bondTypes[bondType.id], bondType);
     bondTypes[bondType.id] = bondType;
     return true;
   }
@@ -198,19 +176,16 @@ contract BondToken is
     uint256 id = nextBondForge++;
     bondForges[id] = bondForge_;
     bondForges[id].id = id;
-    emit AddedBondForge(bondForges[id]);
     return id;
   }
 
   function getBondForge(uint256 id) public view returns (BondForge memory) {
-    BondForge memory bondForge_ = bondForges[id];
-    return bondForge_;
+    return bondForges[id];
   }
 
   function updateBondForge(
     BondForge calldata bondForge_
   ) external onlyOwner returns (bool) {
-    emit ChangedBondForge(bondForges[bondForge_.id], bondForge_);
     bondForges[bondForge_.id] = bondForge_;
     return true;
   }
@@ -284,28 +259,33 @@ contract BondToken is
     return accountBonds[account].next(id);
   }
 
+  struct CreditBondOptions {
+    bool transferFee;
+    uint256 multiplier100;
+    uint256 matures;
+    uint8 affiliateMultipliers;
+    bool autolink;
+  }
+
   function _creditBond(
     address account,
     uint256 bondType,
     uint256 amount,
-    bool transferFee,
-    uint256 multiplier100,
-    uint256 matures,
-    bool autolink
+    CreditBondOptions memory options
   ) internal returns (uint256, uint256) {
     require(amount > 0);
 
     mapping(uint256 => Bond) storage _bonds = bonds[account];
 
-    if (multiplier100 == 0) {
-      multiplier100 = bondTypes[bondType].multiplier100;
+    if (options.multiplier100 == 0) {
+      options.multiplier100 = bondTypes[bondType].multiplier100;
     }
-    if (matures == 0) {
-      matures = block.timestamp + bondTypes[bondType].matureDuration;
+    if (options.matures == 0) {
+      options.matures = block.timestamp + bondTypes[bondType].matureDuration;
     }
 
     LinkedList.List storage list = bondsByBondType[account][bondType][
-      multiplier100
+      options.multiplier100
     ];
 
     uint256 id;
@@ -314,30 +294,24 @@ contract BondToken is
     Bond storage bond_ = _bonds[list.head];
 
     if (
-      autolink &&
+      options.autolink &&
       list.list[list.head].exists &&
-      SignedMath.abs(int256(bond_.matures) - int256(matures)) < 7 * 24 * 3600
+      SignedMath.abs(int256(bond_.matures) - int256(options.matures)) <
+      7 * 24 * 3600
     ) {
       id = list.head;
       tokenId = _bonds[id].token;
 
-      if (bond_.matures > matures) {
-        bond_.matures = matures;
+      if (bond_.matures > options.matures) {
+        bond_.matures = options.matures;
       }
     } else {
-      (, id, tokenId) = _creditBondSetBondParams(
-        account,
-        bondType,
-        amount,
-        transferFee,
-        multiplier100,
-        matures
-      );
+      (, id, tokenId) = _creditBondSetBondParams(account, bondType, options);
     }
 
     uint256 fee = 0;
 
-    if (transferFee) {
+    if (options.transferFee) {
       fee = (amount * config.transferFee100) / (100 * 100);
       amount -= fee;
     }
@@ -360,10 +334,7 @@ contract BondToken is
   function _creditBondSetBondParams(
     address account,
     uint256 bondType,
-    uint256, //amount,
-    bool, //transferFee,
-    uint256 multiplier100,
-    uint256 matures
+    CreditBondOptions memory options
   ) internal returns (bool, uint256, uint256) {
     uint256 id = nextBond[account]++;
     uint256 tokenId = uint256(
@@ -378,10 +349,11 @@ contract BondToken is
     bond__.token = tokenId;
     bond__.bondType = bondType;
     bond__.owner = account;
-    bond__.multiplier100 = multiplier100;
-    bond__.matures = matures;
+    bond__.multiplier100 = options.multiplier100;
+    bond__.matures = options.matures;
+    bond__.affiliateMultipliers = options.affiliateMultipliers;
 
-    bondsByBondType[account][bondType][multiplier100].unshift(id);
+    bondsByBondType[account][bondType][options.multiplier100].unshift(id);
     accountBonds[account].unshift(id);
 
     return (true, id, tokenId);
@@ -529,17 +501,20 @@ contract BondToken is
 
     _debitBond(from, bond, amount);
 
+    CreditBondOptions memory options;
+    options.transferFee = true;
+    options.multiplier100 = bonds[from][bond].multiplier100;
+    options.matures = bonds[from][bond].matures;
+    options.affiliateMultipliers = bonds[from][bond].affiliateMultipliers;
+    options.autolink = true;
+
     (uint256 tokenId, uint256 fee) = _creditBond(
       to,
       bonds[from][bond].bondType,
       amount,
-      true,
-      bonds[from][bond].multiplier100,
-      bonds[from][bond].matures,
-      true
+      options
     );
 
-    emit TransferFee(_msgSender(), from, to, amount, fee);
     emit Transfer(from, address(0), fee);
     emit TransferSingle(
       _msgSender(),
@@ -617,12 +592,20 @@ contract BondToken is
   function mintAffiliate(
     uint256 bondType,
     uint256 amount,
-    BondAffiliate calldata affiliate
-  ) external returns (bool) {
+    BondAffiliate calldata affiliate,
+    Signature calldata signature
+  )
+    external
+    verifySignature(
+      abi.encode(this.mintAffiliate.selector, bondType, amount, affiliate),
+      signature
+    )
+    returns (bool)
+  {
     require(affiliate.account != address(0));
 
     if (
-      (bonds[affiliate.account][affiliate.bond].balance *
+      (bondTypes[bonds[affiliate.account][affiliate.bond].bondType].amount *
         config.minAffiliateBondAmount100) /
         100 <=
       amount
@@ -660,7 +643,10 @@ contract BondToken is
 
     address to = _msgSender();
 
-    (uint256 tokenId, ) = _creditBond(to, bondType, amount, false, 0, 0, true);
+    CreditBondOptions memory options;
+    options.autolink = true;
+
+    (uint256 tokenId, ) = _creditBond(to, bondType, amount, options);
 
     totalSupply += amount;
 
@@ -725,6 +711,7 @@ contract BondToken is
     uint256 bondType = bonds[_msgSender()][bonds_[0]].bondType;
     uint256 multiplier100 = type(uint256).max;
     uint256 matures = 0;
+    uint8 affiliateMultipliers = 0;
     uint256 requirementsMet = 0;
 
     for (uint256 i = 0; i < bonds_.length; i++) {
@@ -739,21 +726,25 @@ contract BondToken is
       if (bonds[_msgSender()][bonds_[i]].matures > matures) {
         matures = bonds[_msgSender()][bonds_[i]].matures;
       }
+      if (
+        bonds[_msgSender()][bonds_[i]].affiliateMultipliers >
+        affiliateMultipliers
+      ) {
+        affiliateMultipliers = bonds[_msgSender()][bonds_[i]]
+          .affiliateMultipliers;
+      }
 
       _debitBond(_msgSender(), bonds_[i], amounts_[i]);
     }
 
     require(requirementsMet == bonds_.length);
 
-    _creditBond(
-      _msgSender(),
-      bondType,
-      amount,
-      false,
-      multiplier100,
-      matures,
-      false
-    );
+    CreditBondOptions memory options;
+    options.multiplier100 = multiplier100;
+    options.matures = matures;
+    options.affiliateMultipliers = affiliateMultipliers;
+
+    _creditBond(_msgSender(), bondType, amount, options);
 
     return true;
   }
@@ -766,20 +757,20 @@ contract BondToken is
     uint256 bondType = bonds[_msgSender()][bond_].bondType;
     uint256 matures = bonds[_msgSender()][bond_].matures;
     uint256 multiplier100 = bonds[_msgSender()][bond_].multiplier100;
+    uint8 affiliateMultipliers = bonds[_msgSender()][bond_]
+      .affiliateMultipliers;
 
     _debitBond(_msgSender(), bond_, amount);
 
     for (uint256 i = 0; i < amounts_.length; i++) {
       amount -= amounts_[i];
-      _creditBond(
-        _msgSender(),
-        bondType,
-        amounts_[i],
-        false,
-        multiplier100,
-        matures,
-        false
-      );
+
+      CreditBondOptions memory options;
+      options.multiplier100 = multiplier100;
+      options.matures = matures;
+      options.affiliateMultipliers = affiliateMultipliers;
+
+      _creditBond(_msgSender(), bondType, amounts_[i], options);
     }
 
     require(amount == 0);
@@ -797,9 +788,10 @@ contract BondToken is
     require(_forge.enabled);
 
     uint256 amount = 0;
-    uint256 bondType = bondForges[forge_].result.bondType;
-    uint256 multiplier100 = bondForges[forge_].result.multiplier100;
-    uint256 matureDuration = bondForges[forge_].result.matureDuration;
+    uint256 bondType = _forge.result.bondType;
+    uint256 multiplier100 = _forge.result.multiplier100;
+    uint256 matureDuration = _forge.result.matureDuration;
+    uint8 affiliateMultipliers = 0;
     uint256 requirementsMet = 0;
     uint256[16] memory requirementCounts;
 
@@ -808,7 +800,9 @@ contract BondToken is
     }
 
     for (uint256 i = 0; i < bonds_.length; i++) {
-      Bond storage _bond = bonds[_msgSender()][bonds_[i]];
+      uint256 bond_ = bonds_[i];
+      uint256 amount_ = amounts_[i];
+      Bond storage _bond = bonds[_msgSender()][bond_];
 
       for (uint256 j = 0; j < _forge.requirements.length; j++) {
         BondForgeRequirement storage requirement = _forge.requirements[j];
@@ -830,24 +824,24 @@ contract BondToken is
         }
       }
 
-      amount += amounts_[i];
+      amount += amount_;
       if (_bond.multiplier100 > multiplier100) {
         multiplier100 = _bond.multiplier100;
       }
-      _debitBond(_msgSender(), bonds_[i], amounts_[i]);
+      if (_bond.affiliateMultipliers > affiliateMultipliers) {
+        affiliateMultipliers = _bond.affiliateMultipliers;
+      }
+      _debitBond(_msgSender(), bond_, amount_);
     }
 
     require(requirementsMet == _forge.requirements.length);
 
-    _creditBond(
-      _msgSender(),
-      bondType,
-      amount,
-      false,
-      multiplier100,
-      block.timestamp + matureDuration,
-      false
-    );
+    CreditBondOptions memory options;
+    options.multiplier100 = multiplier100;
+    options.matures = block.timestamp + matureDuration;
+    options.affiliateMultipliers = affiliateMultipliers;
+
+    _creditBond(_msgSender(), bondType, amount, options);
 
     return true;
   }
@@ -870,22 +864,14 @@ contract BondToken is
 
     address to = account;
 
-    (uint256 tokenId, ) = _creditBond(to, bondType, amount, false, 0, 0, false);
+    CreditBondOptions memory options;
+
+    (uint256 tokenId, ) = _creditBond(to, bondType, amount, options);
 
     totalSupply += amount;
 
     emit Transfer(address(0), to, amount);
     emit TransferSingle(_msgSender(), address(0), to, tokenId, amount);
-
-    return true;
-  }
-
-  function donate(address sender, uint256 amount) external returns (bool) {
-    require(amount >= _usdt.allowance(sender, address(this)));
-
-    if (!_usdt.transferFrom(sender, address(this), amount)) {
-      revert();
-    }
 
     return true;
   }

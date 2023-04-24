@@ -1833,8 +1833,12 @@ contract("BondToken", ([deployer, wisdom, user1, user2, user3]) => {
     });
   });
 
-  describe.only("Token gifting", () => {
+  describe("Token gifting", () => {
+    let timestamp = (Date.now() / 1000) | 0;
+
     beforeEach(async () => {
+      advanceBlockAtTime(timestamp);
+
       await erc20.approve(
         contract.address,
         (400_000_000_000n * 10n ** DECIMALS).toString(),
@@ -1870,7 +1874,7 @@ contract("BondToken", ([deployer, wisdom, user1, user2, user3]) => {
         web3,
       });
 
-      const expires = ((Date.now() / 1000) | 0) + 15;
+      const expires = timestamp + 15;
 
       const signature = await _signer.sign(
         contract.abi,
@@ -1903,7 +1907,7 @@ contract("BondToken", ([deployer, wisdom, user1, user2, user3]) => {
         web3,
       });
 
-      const expires = ((Date.now() / 1000) | 0) + 15;
+      const expires = timestamp + 15;
 
       const signature = await _signer.sign(
         contract.abi,
@@ -1939,7 +1943,7 @@ contract("BondToken", ([deployer, wisdom, user1, user2, user3]) => {
         web3,
       });
 
-      const expires = ((Date.now() / 1000) | 0) + 15;
+      const expires = timestamp + 15;
 
       const signature = await _signer.sign(
         contract.abi,
@@ -1960,6 +1964,41 @@ contract("BondToken", ([deployer, wisdom, user1, user2, user3]) => {
         { from: user2 }
       );
     });
+    it("should expire transaction", async () => {
+      const _signer = new Signer({
+        keyStore: {
+          async get(signerAddress: string): Promise<string> {
+            return signer.privateKey;
+          },
+        },
+        address: contract.address,
+        web3,
+      });
+
+      const expires = timestamp - 1;
+
+      const signature = await _signer.sign(
+        contract.abi,
+        "gift",
+        user2,
+        user1,
+        0n.toString(),
+        (100_000n * 10n ** DECIMALS).toString(),
+        expires
+      );
+
+      await contract
+        .gift(
+          user1,
+          0n.toString(),
+          (100_000n * 10n ** DECIMALS).toString(),
+          expires,
+          signature,
+          { from: user2 }
+        )
+        .should.eventually.rejectedWith();
+    });
+
     it("should result in gifted bond", async () => {
       const _signer = new Signer({
         keyStore: {
@@ -1971,7 +2010,7 @@ contract("BondToken", ([deployer, wisdom, user1, user2, user3]) => {
         web3,
       });
 
-      const expires = ((Date.now() / 1000) | 0) + 15;
+      const expires = timestamp + 15;
 
       const signature = await _signer.sign(
         contract.abi,
@@ -2070,16 +2109,6 @@ contract("BondToken", ([deployer, wisdom, user1, user2, user3]) => {
       user2Balance
         .toString()
         .should.equal((45_000n * 10n ** DECIMALS).toString());
-
-      eventEmitted(result, "TransferFee", (event: any) => {
-        return (
-          event.operator === user1 &&
-          event.from === user1 &&
-          event.to === user2 &&
-          event.value.toString() === (50_000n * 10n ** DECIMALS).toString() &&
-          event.fee.toString() === (5_000n * 10n ** DECIMALS).toString()
-        );
-      });
 
       eventEmitted(result, "Transfer", (event: any) => {
         return (
