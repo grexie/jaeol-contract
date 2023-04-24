@@ -1931,7 +1931,7 @@ contract("BondToken", ([deployer, wisdom, user1, user2, user3]) => {
 
   describe("Token forging", () => {
     beforeEach(async () => {
-      await advanceBlockAtTime((Date.now() / 1000) | 0);
+      await advanceBlockAtTime(Math.floor(Date.now() / 1000));
 
       await erc20.approve(
         contract.address,
@@ -2013,8 +2013,6 @@ contract("BondToken", ([deployer, wisdom, user1, user2, user3]) => {
         }
       );
 
-      await advanceBlockAtTime(startTime + 3600 + (7 * 24 * 3600 + 3600) * 3);
-
       var bonds: Bond[] = [];
       for await (const bond of iterateBonds(user1)) {
         bonds.push(bond);
@@ -2022,6 +2020,7 @@ contract("BondToken", ([deployer, wisdom, user1, user2, user3]) => {
 
       bonds.length.should.equal(COINS.length + 2);
 
+      await advanceBlockAtTime(startTime + 3600 + (7 * 24 * 3600 + 3600) * 3);
       await contract.forge(
         0n.toString(),
         bonds.map((b) => b.id.toString()),
