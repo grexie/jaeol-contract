@@ -1931,6 +1931,8 @@ contract("BondToken", ([deployer, wisdom, user1, user2, user3]) => {
 
   describe("Token forging", () => {
     beforeEach(async () => {
+      await advanceBlockAtTime((Date.now() / 1000) | 0);
+
       await erc20.approve(
         contract.address,
         (400_000_000_000n * 10n ** DECIMALS).toString(),
