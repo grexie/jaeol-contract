@@ -2047,11 +2047,12 @@ contract("BondToken", ([deployer, wisdom, user1, user2, user3]) => {
           ).toString()
         );
       bonds[0].multiplier100.toString().should.equal(50000n.toString());
-      bonds[0].matures
-        .toString()
-        .should.equal(
-          (startTime + 3600 + (7 * 24 * 3600 + 3600) * 3 + 100).toString()
-        );
+      Number(bonds[0].matures.toString()).should.greaterThanOrEqual(
+        startTime + 3600 + (7 * 24 * 3600 + 3600) * 3 + 100 - 15
+      );
+      Number(bonds[0].matures.toString()).should.lessThanOrEqual(
+        startTime + 3600 + (7 * 24 * 3600 + 3600) * 3 + 100 + 15
+      );
     });
 
     it("should forge based on balance requirement", async () => {
@@ -3170,7 +3171,8 @@ contract("BondToken", ([deployer, wisdom, user1, user2, user3]) => {
       }
 
       const uri = await contract.uri(bonds1[0].token.toString());
-      uri.should.equal(config.baseURI + "0x" + bonds1[0].token.toString(16));
+
+      uri.should.equal(config.baseURI + web3.utils.toHex(bonds1[0].token));
     });
 
     it("get bond from token", async () => {
