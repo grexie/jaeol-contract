@@ -194,11 +194,11 @@ contract BondToken is
     return address(_usdt);
   }
 
-  function decimals() external view returns (uint8) {
+  function decimals() public view returns (uint8) {
     return _usdt.decimals();
   }
 
-  function uri(uint256 id) external view returns (string memory) {
+  function uri(uint256 id) public view returns (string memory) {
     return string.concat(config.baseURI, id.toHexString(32));
   }
 
@@ -231,7 +231,7 @@ contract BondToken is
   function balanceOfBatch(
     address[] calldata accounts,
     uint256[] calldata ids
-  ) external view returns (uint256[] memory) {
+  ) public view returns (uint256[] memory) {
     require(accounts.length == ids.length);
 
     uint256[] memory batchBalances = new uint256[](accounts.length);
@@ -364,7 +364,7 @@ contract BondToken is
     uint256 bond,
     uint256 amount
   ) internal returns (bool) {
-    require(amount > 0, "E");
+    require(amount > 0);
     require(bonds[account][bond].balance >= amount, bond.toString());
 
     bonds[account][bond].balance -= amount;
@@ -383,7 +383,7 @@ contract BondToken is
   function allowance(
     address owner,
     address spender
-  ) external view returns (uint256) {
+  ) public view returns (uint256) {
     return allowances[owner][spender];
   }
 
@@ -408,8 +408,7 @@ contract BondToken is
   function isApprovedForAll(
     address account,
     address operator
-  ) external view returns (bool) {
-    // TODO: should this be balanceOf checking max uint256?
+  ) public view returns (bool) {
     return allowances[msg.sender][operator] >= this.balanceOf(account);
   }
 
@@ -544,7 +543,7 @@ contract BondToken is
     uint256 id,
     uint256 amount,
     bytes memory data
-  ) private {
+  ) internal {
     if (to.isContract()) {
       try
         IERC1155Receiver(to).onERC1155Received(operator, from, id, amount, data)
@@ -567,7 +566,7 @@ contract BondToken is
     uint256[] memory ids,
     uint256[] memory amounts,
     bytes memory data
-  ) private {
+  ) internal {
     if (to.isContract()) {
       try
         IERC1155Receiver(to).onERC1155BatchReceived(
@@ -592,20 +591,32 @@ contract BondToken is
   function mintAffiliate(
     uint256 bondType,
     uint256 amount,
+    uint256 expires,
     BondAffiliate calldata affiliate,
     Signature calldata signature
   )
     external
     verifySignature(
-      abi.encode(this.mintAffiliate.selector, bondType, amount, affiliate),
+      abi.encode(
+        this.mintAffiliate.selector,
+        bondType,
+        amount,
+        expires,
+        affiliate
+      ),
       signature
     )
     returns (bool)
   {
+    require(block.timestamp <= expires);
     require(affiliate.account != address(0));
+    require(
+      affiliate.account == bonds[affiliate.account][affiliate.bond].owner
+    );
+    require(bonds[affiliate.account][affiliate.bond].balance > 0);
 
     if (
-      (bondTypes[bonds[affiliate.account][affiliate.bond].bondType].amount *
+      (bonds[affiliate.account][affiliate.bond].balance *
         config.minAffiliateBondAmount100) /
         100 <=
       amount
@@ -615,8 +626,21 @@ contract BondToken is
         config.maxAffiliateMultipliers
       ) {
         bonds[affiliate.account][affiliate.bond].affiliateMultipliers++;
+
+        bondsByBondType[affiliate.account][
+          bonds[affiliate.account][affiliate.bond].bondType
+        ][bonds[affiliate.account][affiliate.bond].multiplier100].remove(
+            affiliate.bond
+          );
+
         bonds[affiliate.account][affiliate.bond].multiplier100 += config
           .affiliateMultiplier100;
+
+        bondsByBondType[affiliate.account][
+          bonds[affiliate.account][affiliate.bond].bondType
+        ][bonds[affiliate.account][affiliate.bond].multiplier100].unshift(
+            affiliate.bond
+          );
       }
     }
 
@@ -789,9 +813,6 @@ contract BondToken is
 
     uint256 amount = 0;
     uint256 bondType = _forge.result.bondType;
-    uint256 multiplier100 = _forge.result.multiplier100;
-    uint256 matureDuration = _forge.result.matureDuration;
-    uint8 affiliateMultipliers = 0;
     uint256 requirementsMet = 0;
     uint256[16] memory requirementCounts;
 
@@ -825,21 +846,14 @@ contract BondToken is
       }
 
       amount += amount_;
-      if (_bond.multiplier100 > multiplier100) {
-        multiplier100 = _bond.multiplier100;
-      }
-      if (_bond.affiliateMultipliers > affiliateMultipliers) {
-        affiliateMultipliers = _bond.affiliateMultipliers;
-      }
       _debitBond(_msgSender(), bond_, amount_);
     }
 
     require(requirementsMet == _forge.requirements.length);
 
     CreditBondOptions memory options;
-    options.multiplier100 = multiplier100;
-    options.matures = block.timestamp + matureDuration;
-    options.affiliateMultipliers = affiliateMultipliers;
+    options.multiplier100 = _forge.result.multiplier100;
+    options.matures = block.timestamp + _forge.result.matureDuration;
 
     _creditBond(_msgSender(), bondType, amount, options);
 
@@ -860,7 +874,7 @@ contract BondToken is
     )
     returns (bool)
   {
-    require(expires >= block.timestamp);
+    require(block.timestamp <= expires);
 
     address to = account;
 
