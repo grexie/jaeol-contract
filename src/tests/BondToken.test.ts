@@ -1985,9 +1985,8 @@ contract("BondToken", ([deployer, wisdom, user1, user2, user3]) => {
       });
       const startTime = ((Date.now() / 1000) | 0) + 3600;
 
-      await advanceBlockAtTime(startTime);
-
       for (const i in COINS) {
+        await advanceBlockAtTime(startTime);
         await contract.mint(
           i.toString(),
           (BigInt(COINS[i].value) * 10n ** DECIMALS).toString(),
