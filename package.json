@@ -48,6 +48,9 @@
   "exports": {
     "./contracts/BondToken.json": {
       "default": "./contracts/BondToken.json"
+    },
+    "./contracts/Token.json": {
+      "default": "./contracts/Token.json"
     }
   }
 }
