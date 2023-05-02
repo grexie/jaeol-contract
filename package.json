@@ -39,7 +39,8 @@
   },
   "dependencies": {
     "@grexie/signable": "^0.1.6",
-    "@openzeppelin/contracts": "^4.8.3"
+    "@openzeppelin/contracts": "^4.8.3",
+    "release-it": "^15.10.3"
   },
   "publishConfig": {
     "access": "public"
