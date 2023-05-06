@@ -608,6 +608,52 @@ contract BondToken is
     )
     returns (bool)
   {
+    return
+      _mintAffiliate(
+        _msgSender(),
+        _msgSender(),
+        bondType,
+        amount,
+        expires,
+        affiliate
+      );
+  }
+
+  function mintAffiliateFrom(
+    address from,
+    address to,
+    uint256 bondType,
+    uint256 amount,
+    uint256 expires,
+    BondAffiliate calldata affiliate,
+    Signature calldata signature
+  )
+    external
+    verifySignature(
+      abi.encode(
+        this.mintAffiliateFrom.selector,
+        from,
+        to,
+        bondType,
+        amount,
+        expires,
+        affiliate
+      ),
+      signature
+    )
+    returns (bool)
+  {
+    return _mintAffiliate(from, to, bondType, amount, expires, affiliate);
+  }
+
+  function _mintAffiliate(
+    address from,
+    address to,
+    uint256 bondType,
+    uint256 amount,
+    uint256 expires,
+    BondAffiliate calldata affiliate
+  ) internal returns (bool) {
     require(block.timestamp <= expires);
     require(affiliate.account != address(0));
     require(
@@ -644,28 +690,40 @@ contract BondToken is
       }
     }
 
-    return _mint(bondType, amount);
+    return _mint(from, to, bondType, amount);
   }
 
   function mint(uint256 bondType, uint256 amount) external returns (bool) {
-    return _mint(bondType, amount);
+    return _mint(_msgSender(), _msgSender(), bondType, amount);
   }
 
-  function _mint(uint256 bondType, uint256 amount) internal returns (bool) {
+  function mintTo(
+    address from,
+    address to,
+    uint256 bondType,
+    uint256 amount
+  ) external returns (bool) {
+    return _mint(from, to, bondType, amount);
+  }
+
+  function _mint(
+    address from,
+    address to,
+    uint256 bondType,
+    uint256 amount
+  ) internal returns (bool) {
     require(bondTypes[bondType].enabled);
     require(bondTypes[bondType].amount <= amount);
-    require(amount <= _usdt.allowance(_msgSender(), address(this)));
+    require(amount <= _usdt.allowance(from, address(this)));
     require(totalSupply + amount <= config.supplyCap);
 
-    if (!_usdt.transferFrom(msg.sender, address(this), amount)) {
+    if (!_usdt.transferFrom(from, address(this), amount)) {
       revert();
     }
 
     if (!_usdt.transfer(config.depositAccount, amount)) {
       revert();
     }
-
-    address to = _msgSender();
 
     CreditBondOptions memory options;
     options.autolink = true;
@@ -674,14 +732,8 @@ contract BondToken is
 
     totalSupply += amount;
 
-    emit Transfer(address(0), _msgSender(), amount);
-    emit TransferSingle(
-      _msgSender(),
-      address(0),
-      _msgSender(),
-      tokenId,
-      amount
-    );
+    emit Transfer(address(0), to, amount);
+    emit TransferSingle(_msgSender(), address(0), to, tokenId, amount);
 
     return true;
   }
