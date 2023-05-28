@@ -47,6 +47,10 @@ files.forEach(file => {
   const { abi } = JSON.parse(
     fs.readFileSync(path.resolve(source, file)).toString()
   );
-  fs.writeFileSync(path.resolve(dest, file), JSON.stringify(abi, null, 2));
+  const basename = path.basename(file, '.json');
+  fs.writeFileSync(
+    path.resolve(dest, `${basename}.cjs`),
+    `module.exports = ${JSON.stringify(abi, null, 2)};`
+  );
 });
 process.stdout.write(' done\n\n');
