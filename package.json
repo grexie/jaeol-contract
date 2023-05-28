@@ -46,11 +46,8 @@
     "access": "public"
   },
   "exports": {
-    "./contracts/BondToken": {
-      "default": "./contracts/BondToken.cjs"
-    },
-    "./contracts/Token": {
-      "default": "./contracts/Token.cjs"
+    "./contracts/*": {
+      "default": "./contracts/*.cjs"
     }
   }
 }
