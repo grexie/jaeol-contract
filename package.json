@@ -47,6 +47,7 @@
   },
   "exports": {
     "./contracts/*": {
+      "types": "./contracts/*.d.ts",
       "default": "./contracts/*.cjs"
     }
   }

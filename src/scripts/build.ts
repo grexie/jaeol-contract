@@ -52,5 +52,9 @@ files.forEach(file => {
     path.resolve(dest, `${basename}.cjs`),
     `module.exports = ${JSON.stringify(abi, null, 2)};`
   );
+  fs.writeFileSync(
+    path.resolve(dest, `${basename}.d.ts`),
+    `import { AbiItem } from 'web3-utils';\ndeclare const abi: AbiItem[];\nexport default abi;`
+  );
 });
 process.stdout.write(' done\n\n');
